@@ -1,0 +1,24 @@
+# First run "xhost +local:docker"
+version: "3.8"
+
+services:
+  aurashare-dev:
+    image: aurashare-dev
+    container_name: aurashare-workspace
+    network_mode: "host"
+    ipc: "host"
+    privileged: true
+    # 👇 ADD THIS LINE to match your host user permissions
+    user: "${CURRENT_UID:-1000}:${CURRENT_GID:-1000}"
+    environment:
+      - DISPLAY=${DISPLAY}
+    volumes:
+      - .:/app
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+    devices:
+      - /dev/dri:/dev/dri
+      - /dev/snd:/dev/snd
+    working_dir: /app
+    stdin_open: true
+    tty: true
+    command: tail -f /dev/null

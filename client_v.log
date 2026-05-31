@@ -1,0 +1,98 @@
+2026/05/31 16:51:04 Starting AuraShare Receiver (Alice) connecting to 127.0.0.1:50006...
+2026/05/31 16:51:04 Receiver config: TestMode=true, probesize=32, analyze_duration=0, low_delay=true, framedrop=true, loglevel=warning
+2026/05/31 16:51:04 Connecting to host via QUIC...
+2026/05/31 16:51:04 Connected to host 127.0.0.1:50006! Waiting for inbound media stream...
+2026/05/31 16:51:05 Media stream accepted. Launching ffplay rendering window...
+2026/05/31 16:51:05 ╔══════════════════════════════════════════════════════════╗
+2026/05/31 16:51:05 ║  HEADLESS TEST MODE - No video window will appear       ║
+2026/05/31 16:51:05 ║  Monitoring data receipt from sender...                 ║
+2026/05/31 16:51:05 ║  Look for [Receiver] Rate lines to confirm data flow   ║
+2026/05/31 16:51:05 ╚══════════════════════════════════════════════════════════╝
+2026/05/31 16:51:05 [Receive] ✓ First data received! 12665 bytes
+2026/05/31 16:51:06 [Receive] Chunk #100 | This: 725 bytes | Total: 0.14 MB
+2026/05/31 16:51:06 [Receive] Chunk #200 | This: 684 bytes | Total: 0.29 MB
+2026/05/31 16:51:07 [Receive] Chunk #300 | This: 786 bytes | Total: 0.40 MB
+[Receiver] Rate: 1.84 Mbps | Total Transferred: 0.46 MB
+2026/05/31 16:51:07 [Receive] Chunk #400 | This: 723 bytes | Total: 0.56 MB
+2026/05/31 16:51:08 [Receive] Chunk #500 | This: 763 bytes | Total: 0.71 MB
+2026/05/31 16:51:09 [Receive] Chunk #600 | This: 667 bytes | Total: 0.82 MB
+[Receiver] Rate: 1.70 Mbps | Total Transferred: 0.89 MB
+2026/05/31 16:51:09 [Receive] Chunk #700 | This: 718 bytes | Total: 0.97 MB
+2026/05/31 16:51:10 [Receive] Chunk #800 | This: 708 bytes | Total: 1.12 MB
+2026/05/31 16:51:10 [Receive] Chunk #900 | This: 721 bytes | Total: 1.23 MB
+[Receiver] Rate: 1.90 Mbps | Total Transferred: 1.36 MB
+2026/05/31 16:51:11 [Receive] Chunk #1000 | This: 729 bytes | Total: 1.38 MB
+2026/05/31 16:51:12 [Receive] Chunk #1100 | This: 683 bytes | Total: 1.53 MB
+2026/05/31 16:51:12 Shutting down AuraShare Receiver...
+2026/05/31 16:51:12 [Receive] Chunk #1200 | This: 727 bytes | Total: 1.64 MB
+2026/05/31 16:51:13 [Receive] Chunk #1300 | This: 698 bytes | Total: 1.79 MB
+[Receiver] Rate: 1.75 Mbps | Total Transferred: 1.80 MB
+2026/05/31 16:51:13 [Receive] Chunk #1400 | This: 692 bytes | Total: 1.94 MB
+2026/05/31 16:51:14 [Receive] Chunk #1500 | This: 718 bytes | Total: 2.05 MB
+2026/05/31 16:51:15 [Receive] Chunk #1600 | This: 677 bytes | Total: 2.20 MB
+[Receiver] Rate: 1.90 Mbps | Total Transferred: 2.27 MB
+2026/05/31 16:51:15 [Receive] Chunk #1700 | This: 710 bytes | Total: 2.35 MB
+2026/05/31 16:51:16 [Receive] Chunk #1800 | This: 841 bytes | Total: 2.46 MB
+2026/05/31 16:51:17 [Receive] Chunk #1900 | This: 715 bytes | Total: 2.61 MB
+[Receiver] Rate: 1.72 Mbps | Total Transferred: 2.70 MB
+2026/05/31 16:51:17 [Receive] Chunk #2000 | This: 661 bytes | Total: 2.77 MB
+2026/05/31 16:51:18 [Receive] Chunk #2100 | This: 753 bytes | Total: 2.88 MB
+2026/05/31 16:51:18 [Receive] Chunk #2200 | This: 729 bytes | Total: 3.03 MB
+[Receiver] Rate: 1.72 Mbps | Total Transferred: 3.13 MB
+2026/05/31 16:51:19 [Receive] Chunk #2300 | This: 867 bytes | Total: 3.18 MB
+2026/05/31 16:51:20 [Receive] Chunk #2400 | This: 711 bytes | Total: 3.29 MB
+2026/05/31 16:51:20 [Receive] Chunk #2500 | This: 703 bytes | Total: 3.44 MB
+2026/05/31 16:51:21 [Receive] Chunk #2600 | This: 404 bytes | Total: 3.59 MB
+[Receiver] Rate: 1.86 Mbps | Total Transferred: 3.60 MB
+2026/05/31 16:51:22 [Receive] Chunk #2700 | This: 711 bytes | Total: 3.71 MB
+2026/05/31 16:51:22 [Receive] Chunk #2800 | This: 796 bytes | Total: 3.85 MB
+2026/05/31 16:51:23 [Receive] Chunk #2900 | This: 782 bytes | Total: 3.97 MB
+[Receiver] Rate: 1.65 Mbps | Total Transferred: 4.01 MB
+2026/05/31 16:51:23 [Receive] Chunk #3000 | This: 849 bytes | Total: 4.12 MB
+2026/05/31 16:51:24 [Receive] Chunk #3100 | This: 721 bytes | Total: 4.27 MB
+2026/05/31 16:51:25 [Receive] Chunk #3200 | This: 695 bytes | Total: 4.38 MB
+[Receiver] Rate: 1.70 Mbps | Total Transferred: 4.43 MB
+2026/05/31 16:51:25 [Receive] Chunk #3300 | This: 823 bytes | Total: 4.53 MB
+2026/05/31 16:51:26 [Receive] Chunk #3400 | This: 704 bytes | Total: 4.68 MB
+2026/05/31 16:51:27 [Receive] Chunk #3500 | This: 822 bytes | Total: 4.79 MB
+[Receiver] Rate: 1.68 Mbps | Total Transferred: 4.86 MB
+2026/05/31 16:51:27 [Receive] Chunk #3600 | This: 772 bytes | Total: 4.94 MB
+2026/05/31 16:51:28 [Receive] Chunk #3700 | This: 816 bytes | Total: 5.09 MB
+2026/05/31 16:51:29 [Receive] Chunk #3800 | This: 721 bytes | Total: 5.21 MB
+[Receiver] Rate: 1.67 Mbps | Total Transferred: 5.27 MB
+2026/05/31 16:51:29 [Receive] Chunk #3900 | This: 708 bytes | Total: 5.35 MB
+2026/05/31 16:51:30 [Receive] Chunk #4000 | This: 1456 bytes | Total: 5.51 MB
+2026/05/31 16:51:31 [Receive] Chunk #4100 | This: 709 bytes | Total: 5.61 MB
+[Receiver] Rate: 1.63 Mbps | Total Transferred: 5.68 MB
+2026/05/31 16:51:31 [Receive] Chunk #4200 | This: 804 bytes | Total: 5.77 MB
+2026/05/31 16:51:32 [Receive] Chunk #4300 | This: 705 bytes | Total: 5.92 MB
+2026/05/31 16:51:33 [Receive] Chunk #4400 | This: 879 bytes | Total: 6.03 MB
+[Receiver] Rate: 1.66 Mbps | Total Transferred: 6.10 MB
+2026/05/31 16:51:33 [Receive] Chunk #4500 | This: 722 bytes | Total: 6.18 MB
+2026/05/31 16:51:34 [Receive] Chunk #4600 | This: 399 bytes | Total: 6.33 MB
+2026/05/31 16:51:35 [Receive] Chunk #4700 | This: 708 bytes | Total: 6.44 MB
+[Receiver] Rate: 1.72 Mbps | Total Transferred: 6.53 MB
+2026/05/31 16:51:35 [Receive] Chunk #4800 | This: 740 bytes | Total: 6.59 MB
+2026/05/31 16:51:36 [Receive] Chunk #4900 | This: 41800 bytes | Total: 6.74 MB
+2026/05/31 16:51:36 [Receive] Chunk #5000 | This: 714 bytes | Total: 6.85 MB
+[Receiver] Rate: 1.88 Mbps | Total Transferred: 7.00 MB
+2026/05/31 16:51:37 [Receive] Chunk #5100 | This: 833 bytes | Total: 7.00 MB
+2026/05/31 16:51:38 [Receive] Chunk #5200 | This: 729 bytes | Total: 7.11 MB
+2026/05/31 16:51:38 [Receive] Chunk #5300 | This: 788 bytes | Total: 7.26 MB
+2026/05/31 16:51:39 [Receive] Chunk #5400 | This: 795 bytes | Total: 7.42 MB
+[Receiver] Rate: 1.71 Mbps | Total Transferred: 7.42 MB
+2026/05/31 16:51:39 [Receive] Chunk #5500 | This: 652 bytes | Total: 7.53 MB
+2026/05/31 16:51:40 [Receive] Chunk #5600 | This: 715 bytes | Total: 7.68 MB
+2026/05/31 16:51:41 [Receive] Chunk #5700 | This: 673 bytes | Total: 7.83 MB
+[Receiver] Rate: 1.67 Mbps | Total Transferred: 7.84 MB
+2026/05/31 16:51:41 [Receive] Chunk #5800 | This: 726 bytes | Total: 7.94 MB
+2026/05/31 16:51:42 [Receive] Chunk #5900 | This: 680 bytes | Total: 8.09 MB
+2026/05/31 16:51:43 [Receive] Chunk #6000 | This: 1348 bytes | Total: 8.24 MB
+[Receiver] Rate: 1.72 Mbps | Total Transferred: 8.27 MB
+2026/05/31 16:51:43 [Receive] Chunk #6100 | This: 686 bytes | Total: 8.35 MB
+2026/05/31 16:51:44 [Receive] Chunk #6200 | This: 722 bytes | Total: 8.50 MB
+2026/05/31 16:51:45 [Receive] Chunk #6300 | This: 689 bytes | Total: 8.65 MB
+[Receiver] Rate: 1.85 Mbps | Total Transferred: 8.74 MB
+2026/05/31 16:51:45 [Receive] Chunk #6400 | This: 716 bytes | Total: 8.77 MB
+2026/05/31 16:51:46 [Receive] Chunk #6500 | This: 726 bytes | Total: 8.92 MB
+2026/05/31 16:51:46 [Receive] Chunk #6600 | This: 954 bytes | Total: 9.07 MB

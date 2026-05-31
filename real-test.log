@@ -1,0 +1,77 @@
+teotexe@fedora:~/Documents/aurashare$ ./share --port=50001
+2026/05/31 18:32:53 Starting AuraShare Host (Bob) on port 50001...
+2026/05/31 18:32:53 Capture config: TestMode=false, Display=:0, Size=1920x1080, FPS=60, Codec=libx264, GOP=60, Preset=ultrafast, Tune=zerolatency
+2026/05/31 18:32:53 Listening for peers. Please connect using your connect client...
+2026/05/31 18:32:57 Peer connected from: 127.0.0.1:39972
+2026/05/31 18:32:57 Establishing outbound media stream...
+2026/05/31 18:32:57 Opened unidirectional QUIC stream. Spawning media capture processes...
+2026/05/31 18:32:57 Selected capture engine: Wayland via GStreamer (pipewiresrc + y4menc)
+2026/05/31 18:32:57 Initializing D-Bus ScreenCast portal...
+2026/05/31 18:32:57 [Portal] Creating ScreenCast session...
+2026/05/31 18:32:57 [Portal] Session created successfully: /org/freedesktop/portal/desktop/session/1_251/aurashare_session_117301
+2026/05/31 18:32:57 [Portal] Selecting screen source...
+2026/05/31 18:32:57 [Portal] Screen source selected successfully.
+2026/05/31 18:32:57 [Portal] Starting ScreenCast session...
+[Sender] Rate: 0.00 Mbps | Total Transferred: 0.00 MB
+2026/05/31 18:32:59 [Portal] ScreenCast session started. PipeWire Node ID: 126
+2026/05/31 18:32:59 [Portal] Opening PipeWire remote...
+2026/05/31 18:32:59 [Portal] PipeWire remote opened. File Descriptor: 7
+2026/05/31 18:32:59 ScreenCast portal handshake succeeded! PipeWire Node ID: 126, FD: 7
+2026/05/31 18:33:00 [HW Accel] Intel Quick Sync Video (QSV) hardware encoder verified and activated!
+2026/05/31 18:33:00 Adapting streaming engine for Wayland/GStreamer Chained Pipeline (Node ID: 126)...
+2026/05/31 18:33:00 Streaming H.264 desktop stream to peer...
+ffmpeg version 8.1.1 Copyright (c) 2000-2026 the FFmpeg developers
+  built with gcc 16 (GCC)
+  configuration: --prefix=/usr --bindir=/usr/bin --datadir=/usr/share/ffmpeg --docdir=/usr/share/doc/ffmpeg --incdir=/usr/include/ffmpeg --libdir=/usr/lib64 --mandir=/usr/share/man --arch=x86_64 --optflags='-O2 -flto=auto -ffat-lto-objects -fexceptions -g -grecord-gcc-switches -pipe -Wall -Wno-complain-wrong-lang -Werror=format-security -Wp,-U_FORTIFY_SOURCE,-D_FORTIFY_SOURCE=3 -Wp,-D_GLIBCXX_ASSERTIONS -specs=/usr/lib/rpm/redhat/redhat-hardened-cc1 -fstack-protector-strong -specs=/usr/lib/rpm/redhat/redhat-annobin-cc1 -m64 -march=x86-64 -mtune=generic -fasynchronous-unwind-tables -fstack-clash-protection -fcf-protection -mtls-dialect=gnu2 -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer' --extra-ldflags='-Wl,-z,relro -Wl,--as-needed -Wl,-z,pack-relative-relocs -Wl,-z,now -specs=/usr/lib/rpm/redhat/redhat-hardened-ld -specs=/usr/lib/rpm/redhat/redhat-hardened-ld-errors -specs=/usr/lib/rpm/redhat/redhat-annobin-cc1 -Wl,--build-id=sha1 -specs=/usr/lib/rpm/redhat/redhat-package-notes ' --extra-cflags=' -I/usr/include/rav1e' --enable-libopencore-amrnb --enable-libopencore-amrwb --enable-libvo-amrwbenc --enable-version3 --enable-bzlib --enable-chromaprint --enable-fontconfig --enable-frei0r --enable-gcrypt --enable-gnutls --enable-ladspa --enable-lcms2 --enable-libaom --enable-libaribb24 --enable-libaribcaption --enable-libdav1d --enable-libass --enable-libbluray --enable-libbs2b --enable-libcodec2 --enable-libcdio --enable-libdrm --enable-libfdk-aac --enable-libjack --enable-libjxl --enable-libfreetype --enable-libfribidi --enable-libgme --enable-libgsm --enable-libharfbuzz --enable-libilbc --enable-liblc3 --enable-libmp3lame --enable-libmysofa --enable-nvenc --enable-openal --enable-liboapv --enable-opencl --enable-opengl --enable-libopenh264 --enable-libopenjpeg --enable-libopenmpt --enable-libopus --enable-libpulse --enable-libplacebo --enable-librsvg --enable-librav1e --enable-librubberband --enable-libqrencode --enable-libsmbclient --enable-version3 --enable-libsnappy --enable-libsoxr --enable-libspeex --enable-libsrt --enable-libssh --enable-libsvtav1 --enable-libtesseract --enable-libtheora --enable-libtwolame --enable-libvorbis --enable-libv4l2 --enable-libvidstab --enable-libvmaf --enable-version3 --enable-vapoursynth --enable-libvpx --enable-libvvenc --enable-vulkan --enable-libshaderc --enable-libwebp --enable-libx264 --enable-libx265 --enable-libxvid --enable-libxml2 --enable-libzimg --enable-libzmq --enable-libzvbi --enable-lv2 --enable-avfilter --enable-libmodplug --enable-pthreads --disable-static --enable-shared --enable-gpl --disable-debug --disable-stripping --shlibdir=/usr/lib64 --enable-lto --enable-libvpl --enable-runtime-cpudetect
+  libavutil      60. 26.101 / 60. 26.101
+  libavcodec     62. 28.101 / 62. 28.101
+  libavformat    62. 12.101 / 62. 12.101
+  libavdevice    62.  3.101 / 62.  3.101
+  libavfilter    11. 14.101 / 11. 14.101
+  libswscale      9.  5.101 /  9.  5.101
+  libswresample   6.  3.101 /  6.  3.101
+Input #0, yuv4mpegpipe, from 'pipe:0':
+  Duration: N/A, start: 0.000000, bitrate: N/A
+  Stream #0:0: Video: rawvideo (I420 / 0x30323449), yuv420p(progressive), 2880x1800, SAR 1:1 DAR 8:5, 60 fps, 60 tbr, 60 tbn
+Stream mapping:
+  Stream #0:0 -> #0:0 (rawvideo (native) -> h264 (h264_qsv))
+libva info: VA-API version 1.23.0
+libva info: User environment variable requested driver 'iHD'
+libva info: Trying to open /usr/lib64/dri-nonfree/iHD_drv_video.so
+libva info: Found init function __vaDriverInit_1_23
+libva info: va_openDriver() returns 0
+libva info: VA-API version 1.23.0
+libva info: User environment variable requested driver 'iHD'
+libva info: Trying to open /usr/lib64/dri-nonfree/iHD_drv_video.so
+libva info: Found init function __vaDriverInit_1_23
+libva info: va_openDriver() returns 0
+[h264_qsv @ 0x562416d22340] Using the constant quantization parameter (CQP) by default. Please use the global_quality option and other options for a quality-based mode or the b option and other options for a bitrate-based mode if the default is not the desired choice.
+Output #0, h264, to 'pipe:1':
+  Metadata:
+    encoder         : Lavf62.12.101
+  Stream #0:0: Video: h264, nv12(tv, progressive), 2880x1800 [SAR 1:1 DAR 8:5], q=2-31, 60 fps, 60 tbn
+    Metadata:
+      encoder         : Lavc62.28.101 h264_qsv
+    Side data:
+      CPB properties: bitrate max/min/avg: 0/0/0 buffer size: 0 vbv_delay: N/A
+[Sender] Rate: 0.00 Mbps | Total Transferred: 0.00 MBitrate=N/A speed=N/A elapsed=0:00:01.00
+[Sender] Rate: 0.00 Mbps | Total Transferred: 0.00 MBitrate=N/A speed=N/A elapsed=0:00:03.00
+[Sender] Rate: 0.00 Mbps | Total Transferred: 0.00 MBitrate=N/A speed=N/A elapsed=0:00:05.00
+[Sender] Rate: 0.00 Mbps | Total Transferred: 0.00 MBitrate=N/A speed=N/A elapsed=0:00:07.00
+[Sender] Rate: 0.00 Mbps | Total Transferred: 0.00 MBitrate=N/A speed=N/A elapsed=0:00:09.00
+[Sender] Rate: 0.00 Mbps | Total Transferred: 0.00 MBitrate=N/A speed=N/A elapsed=0:00:11.00
+[Sender] Rate: 0.00 Mbps | Total Transferred: 0.00 MBitrate=N/A speed=N/A elapsed=0:00:13.00
+[Sender] Rate: 0.00 Mbps | Total Transferred: 0.00 MBitrate=N/A speed=N/A elapsed=0:00:15.00
+
+
+
+
+
+
+
+teotexe@fedora:~/Documents/aurashare$ ./connect 127.0.0.1:50001
+2026/05/31 18:32:57 Starting AuraShare Receiver (Alice) connecting to 127.0.0.1:50001...
+2026/05/31 18:32:57 Receiver config: TestMode=false, probesize=32, analyze_duration=0, low_delay=true, framedrop=true, loglevel=warning
+2026/05/31 18:32:57 Connecting to host via QUIC...
+2026/05/31 18:32:57 Connected to host 127.0.0.1:50001! Waiting for inbound media stream...
+2026/05/31 18:33:27 Failed to accept media stream: timeout: no recent network activity
