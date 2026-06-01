@@ -39,6 +39,7 @@ func main() {
 	tuneFlag := flag.String("tune", "zerolatency", "x264 encoder tune option")
 	gopFlag := flag.Int("g", 60, "GOP (keyframe interval) size. Default is 60 for low-bandwidth 60 FPS streaming.")
 	codecFlag := flag.String("codec", "libx264", "H.264 encoder library. Auto-probes hardware acceleration (QSV, NVENC, VA-API) by default.")
+	bitrateFlag := flag.Int("bitrate", 8000, "Target video bitrate in kbps (e.g., 8000 for 8 Mbps high-quality 1080p)")
 	testFlag := flag.Bool("test", false, "Use a synthetic test video source (lavfi testsrc) instead of X11 capture")
 	mockPortalFlag := flag.Bool("mock-portal", false, "Start a mock D-Bus ScreenCast portal in the background (for testing)")
 	debugFlag := flag.Bool("debug", false, "Enable verbose diagnostic logging for pipeline debugging")
@@ -54,8 +55,8 @@ func main() {
 	}
 
 	log.Printf("Starting AuraShare Host (Bob) on port %d...", *portFlag)
-	log.Printf("Capture config: TestMode=%v, Headless=%v, Debug=%v, Display=%s, Size=%s, FPS=%d, Codec=%s, GOP=%d, Preset=%s, Tune=%s",
-		*testFlag, *headlessFlag, *debugFlag, display, *sizeFlag, *fpsFlag, *codecFlag, *gopFlag, *presetFlag, *tuneFlag)
+	log.Printf("Capture config: TestMode=%v, Headless=%v, Debug=%v, Display=%s, Size=%s, FPS=%d, Codec=%s, GOP=%d, Preset=%s, Tune=%s, Bitrate=%d",
+		*testFlag, *headlessFlag, *debugFlag, display, *sizeFlag, *fpsFlag, *codecFlag, *gopFlag, *presetFlag, *tuneFlag, *bitrateFlag)
 
 	// Create main context
 	ctx, cancel := context.WithCancel(context.Background())
@@ -107,7 +108,7 @@ func main() {
 		}
 
 		log.Printf("Peer connected from: %s", conn.RemoteAddr().String())
-		go handlePeer(ctx, conn, *testFlag, *headlessFlag, *debugFlag, display, *sizeFlag, *fpsFlag, *codecFlag, *gopFlag, *presetFlag, *tuneFlag)
+		go handlePeer(ctx, conn, *testFlag, *headlessFlag, *debugFlag, display, *sizeFlag, *fpsFlag, *codecFlag, *gopFlag, *presetFlag, *tuneFlag, *bitrateFlag)
 	}
 }
 
@@ -122,20 +123,22 @@ func supportsPipeWireGrab() bool {
 	return strings.Contains(string(output), "pipewiregrab")
 }
 
-// supportsGStreamerPipeWire checks if GStreamer and the pipewiresrc and y4menc plugins are available.
+// supportsGstElement checks if a GStreamer element is available on the system.
+func supportsGstElement(name string) bool {
+	cmd := exec.Command("gst-inspect-1.0", name)
+	return cmd.Run() == nil
+}
+
+// supportsGStreamerPipeWire checks if GStreamer, pipewiresrc, and at least one H.264 encoder are available.
 func supportsGStreamerPipeWire() bool {
 	if _, err := exec.LookPath("gst-launch-1.0"); err != nil {
 		return false
 	}
-	cmd := exec.Command("gst-inspect-1.0", "pipewiresrc")
-	if err := cmd.Run(); err != nil {
+	if !supportsGstElement("pipewiresrc") {
 		return false
 	}
-	cmd2 := exec.Command("gst-inspect-1.0", "y4menc")
-	if err := cmd2.Run(); err != nil {
-		return false
-	}
-	return true
+	// Check for at least one H.264 encoder
+	return supportsGstElement("vaapih264enc") || supportsGstElement("nvh264enc") || supportsGstElement("x264enc")
 }
 
 // supportsEncoder checks if the local ffmpeg binary supports a specific encoder.
@@ -174,38 +177,52 @@ func getCaptureBackend(isWayland, testMode bool) (CaptureBackend, string) {
 		// During automated tests, force Wayland FFmpeg to fully test D-Bus handshakes against our mock portal
 		return BackendWaylandFFmpeg, "Wayland (D-Bus ScreenCast Handshake Loop)"
 	}
+	if supportsGStreamerPipeWire() {
+		return BackendWaylandGStreamer, "Wayland via GStreamer (pipewiresrc + H.264 HW/SW encoder)"
+	}
 	if supportsPipeWireGrab() {
 		return BackendWaylandFFmpeg, "Wayland via FFmpeg (pipewiregrab)"
-	}
-	if supportsGStreamerPipeWire() {
-		return BackendWaylandGStreamer, "Wayland via GStreamer (pipewiresrc + y4menc)"
 	}
 	return BackendX11, "X11 fallback (x11grab)"
 }
 
 // selectBestH264Encoder auto-probes the system for physical hardware acceleration capability.
-func selectBestH264Encoder(requested string, defaultPreset, defaultTune string) (string, []string) {
+func selectBestH264Encoder(requested string, defaultPreset, defaultTune string, bitrate int) (string, []string) {
 	// Respect explicitly passed codecs other than "libx264"
 	if requested != "libx264" {
 		return requested, nil
 	}
 
 	// 1. Check for Intel QSV (Quick Sync Video) - native on Intel Arc V140/Xe GPUs
-	qsvArgs := []string{"-preset", "veryfast", "-forced_idr", "1"}
+	qsvArgs := []string{
+		"-preset", "veryfast",
+		"-forced_idr", "1",
+		"-low_delay", "1", // Forces low-latency mode on Intel silicon
+		"-async_depth", "1", // Reduces frame buffering pipeline inside the GPU
+		"-b:v", fmt.Sprintf("%dk", bitrate),
+	}
 	if verifyPhysicalEncoder("h264_qsv", qsvArgs) {
 		log.Println("[HW Accel] Intel Quick Sync Video (QSV) hardware encoder verified and activated!")
 		return "h264_qsv", qsvArgs
 	}
 
 	// 2. Check for NVIDIA NVENC
-	nvencArgs := []string{"-preset", "p1", "-tune", "ull"}
+	nvencArgs := []string{
+		"-preset", "p1",
+		"-tune", "ull",
+		"-b:v", fmt.Sprintf("%dk", bitrate),
+	}
 	if verifyPhysicalEncoder("h264_nvenc", nvencArgs) {
 		log.Println("[HW Accel] NVIDIA NVENC hardware encoder verified and activated!")
 		return "h264_nvenc", nvencArgs
 	}
 
 	// 3. Check for VA-API (Intel/AMD standard hardware acceleration on Linux)
-	vaapiArgs := []string{"-vaapi_device", "/dev/dri/renderD128", "-vf", "format=nv12,hwupload"}
+	vaapiArgs := []string{
+		"-vaapi_device", "/dev/dri/renderD128",
+		"-vf", "format=nv12,hwupload",
+		"-b:v", fmt.Sprintf("%dk", bitrate),
+	}
 	if verifyPhysicalEncoder("h264_vaapi", vaapiArgs) {
 		log.Println("[HW Accel] Intel/AMD VA-API hardware encoder verified and activated!")
 		return "h264_vaapi", vaapiArgs
@@ -216,10 +233,106 @@ func selectBestH264Encoder(requested string, defaultPreset, defaultTune string) 
 	return "libx264", []string{
 		"-preset", defaultPreset,
 		"-tune", defaultTune,
+		"-b:v", fmt.Sprintf("%dk", bitrate),
 	}
 }
 
-func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, debugMode bool, display, size string, fps int, codec string, gop int, preset, tune string) {
+// selectBestGstH264Encoder selects the best available H.264 encoder element for GStreamer.
+func selectBestGstH264Encoder(codec, preset, tune string, gop int, bitrate int) (string, []string) {
+	// If the user requested a specific GStreamer encoder, respect it
+	if codec == "vaapih264enc" || codec == "nvh264enc" || codec == "x264enc" {
+		return codec, getGstEncoderArgs(codec, preset, tune, gop, bitrate)
+	}
+
+	// 1. Check for VA-API (Intel/AMD hardware acceleration)
+	if supportsGstElement("vaapih264enc") {
+		log.Println("[GStreamer HW Accel] Intel/AMD VA-API hardware encoder (vaapih264enc) verified and activated!")
+		return "vaapih264enc", getGstEncoderArgs("vaapih264enc", preset, tune, gop, bitrate)
+	}
+
+	// 2. Check for NVIDIA NVENC
+	if supportsGstElement("nvh264enc") {
+		log.Println("[GStreamer HW Accel] NVIDIA NVENC hardware encoder (nvh264enc) verified and activated!")
+		return "nvh264enc", getGstEncoderArgs("nvh264enc", preset, tune, gop, bitrate)
+	}
+
+	// 3. Fallback to CPU software encoding
+	log.Println("[GStreamer HW Accel] No hardware acceleration element found in GStreamer. Falling back to software encoding (x264enc).")
+	return "x264enc", getGstEncoderArgs("x264enc", preset, tune, gop, bitrate)
+}
+
+// getGstEncoderArgs returns low-latency properties optimized for each GStreamer H.264 encoder.
+func getGstEncoderArgs(encoder, preset, tune string, gop int, bitrate int) []string {
+	switch encoder {
+	case "vaapih264enc":
+		return []string{
+			fmt.Sprintf("keyframe-period=%d", gop),
+			"max-bframes=0",
+			fmt.Sprintf("bitrate=%d", bitrate),
+		}
+	case "nvh264enc":
+		return []string{
+			fmt.Sprintf("gop-size=%d", gop),
+			"bframes=0",
+			"zerolatency=true",
+			fmt.Sprintf("bitrate=%d", bitrate),
+		}
+	case "x264enc":
+		gstPreset := "ultrafast"
+		if preset != "" {
+			gstPreset = preset
+		}
+		gstTune := "zerolatency"
+		if tune != "" {
+			gstTune = tune
+		}
+		return []string{
+			fmt.Sprintf("key-int-max=%d", gop),
+			"bframes=0",
+			fmt.Sprintf("tune=%s", gstTune),
+			fmt.Sprintf("speed-preset=%s", gstPreset),
+			fmt.Sprintf("bitrate=%d", bitrate),
+		}
+	default:
+		return nil
+	}
+}
+
+// getDefaultPulseAudioMonitor finds the name of the default PulseAudio monitor source.
+func getDefaultPulseAudioMonitor() string {
+	// Try: pactl get-default-sink
+	cmd := exec.Command("pactl", "get-default-sink")
+	output, err := cmd.Output()
+	if err == nil {
+		sink := strings.TrimSpace(string(output))
+		if sink != "" {
+			return sink + ".monitor"
+		}
+	}
+
+	// Try: pactl info
+	cmd2 := exec.Command("pactl", "info")
+	output2, err2 := cmd2.Output()
+	if err2 == nil {
+		lines := strings.Split(string(output2), "\n")
+		for _, line := range lines {
+			if strings.Contains(line, "Default Sink:") {
+				parts := strings.Split(line, ":")
+				if len(parts) >= 2 {
+					sink := strings.TrimSpace(parts[1])
+					if sink != "" {
+						return sink + ".monitor"
+					}
+				}
+			}
+		}
+	}
+
+	// Fallback
+	return "default.monitor"
+}
+
+func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, debugMode bool, display, size string, fps int, codec string, gop int, preset, tune string, bitrate int) {
 	defer conn.CloseWithError(0, "connection closed")
 	log.Printf("Establishing outbound media stream...")
 
@@ -291,10 +404,14 @@ func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, de
 	}
 
 	// Select best encoder (incorporating GPU acceleration)
-	hwCodec, extraCodecArgs := selectBestH264Encoder(codec, preset, tune)
+	hwCodec, extraCodecArgs := selectBestH264Encoder(codec, preset, tune, bitrate)
 	if debugMode {
 		log.Printf("[Debug] Selected encoder: %s, extra args: %v", hwCodec, extraCodecArgs)
 	}
+
+	// Dynamically discover default PulseAudio monitor source name
+	audioDevice := getDefaultPulseAudioMonitor()
+	log.Printf("[Audio] Dynamically selected PulseAudio monitor source: %s", audioDevice)
 
 	if testMode {
 		log.Println("Using synthetic test video source (lavfi testsrc)...")
@@ -317,13 +434,22 @@ func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, de
 		ffmpegArgs := []string{
 			"-f", "lavfi",
 			"-i", fmt.Sprintf("pipewiregrab=fd=3:node=%d", nodeID),
+			"-f", "pulse",
+			"-i", audioDevice,
 			"-c:v", codec,
-			"-preset", preset,
-			"-tune", tune,
-			"-g", fmt.Sprintf("%d", gop),
-			"-f", "h264",
-			"pipe:1",
 		}
+		ffmpegArgs = append(ffmpegArgs, extraCodecArgs...)
+		ffmpegArgs = append(ffmpegArgs,
+			"-c:a", "libopus",
+			"-b:a", "96k",
+			"-vbr:a", "on",
+			"-compression_level:a", "10",
+			"-g", fmt.Sprintf("%d", gop),
+			"-muxdelay", "0",
+			"-mpegts_flags", "initial_discontinuity+resend_headers",
+			"-f", "mpegts",
+			"pipe:1",
+		)
 		cmdFfmpeg = exec.CommandContext(ctx, "ffmpeg", ffmpegArgs...)
 		cmdFfmpeg.ExtraFiles = extraFiles
 	} else if backend == BackendWaylandGStreamer {
@@ -343,6 +469,10 @@ func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, de
 			return
 		}
 
+		// Select the best native GStreamer encoder
+		gstEncoder, gstEncoderArgs := selectBestGstH264Encoder(codec, preset, tune, gop, bitrate)
+		log.Printf("Selected GStreamer H.264 Encoder: %s, with args: %v", gstEncoder, gstEncoderArgs)
+
 		// Build GStreamer command
 		var gstArgs []string
 		if headlessMode {
@@ -350,9 +480,15 @@ func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, de
 			gstArgs = []string{
 				"videotestsrc", "is-live=true",
 				"!", fmt.Sprintf("video/x-raw,format=I420,width=%d,height=%d,framerate=%d/1", width, height, fps),
-				"!", "y4menc",
-				"!", "fdsink", "fd=1", "sync=false",
+				"!", "videoconvert",
 			}
+			gstArgs = append(gstArgs, "!", gstEncoder)
+			gstArgs = append(gstArgs, gstEncoderArgs...)
+			gstArgs = append(gstArgs,
+				"!", "h264parse", "config-interval=-1",
+				"!", "video/x-h264,stream-format=byte-stream,alignment=au",
+				"!", "fdsink", "fd=1", "sync=false",
+			)
 		} else {
 			log.Printf("PipeWire capture: Node ID=%d, FD=%d", nodeID, pwFD)
 			// Pass the portal's PipeWire FD to GStreamer via ExtraFiles.
@@ -369,10 +505,14 @@ func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, de
 				"pipewiresrc", fmt.Sprintf("path=%d", nodeID), "fd=3",
 				"!", "queue", "max-size-buffers=3", "leaky=downstream",
 				"!", "videoconvert",
-				"!", "video/x-raw,format=I420",
-				"!", "y4menc",
-				"!", "fdsink", "fd=1", "sync=false",
 			}
+			gstArgs = append(gstArgs, "!", gstEncoder)
+			gstArgs = append(gstArgs, gstEncoderArgs...)
+			gstArgs = append(gstArgs,
+				"!", "h264parse", "config-interval=-1",
+				"!", "video/x-h264,stream-format=byte-stream,alignment=au",
+				"!", "fdsink", "fd=1", "sync=false",
+			)
 		}
 
 		if debugMode {
@@ -387,20 +527,34 @@ func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, de
 		cmdGstreamer.Stderr = os.Stderr
 
 		// Build FFmpeg encoding command
+		// 1. Build base inputs (GStreamer pipes raw H.264 stream to FFmpeg stdin)
 		ffmpegArgs := []string{
-			"-f", "yuv4mpegpipe",
+			"-f", "h264",
 			"-i", "pipe:0",
+			"-f", "pulse",
+			"-i", audioDevice,
 		}
-		// If custom dimensions are explicitly passed (non-default size), scale using FFmpeg's fast swscale
-		if size != "1920x1080" && !headlessMode {
-			ffmpegArgs = append(ffmpegArgs, "-vf", fmt.Sprintf("scale=%d:%d", width, height))
-		}
-		// Add auto-selected hardware acceleration encoding arguments
-		ffmpegArgs = append(ffmpegArgs, "-c:v", hwCodec)
-		ffmpegArgs = append(ffmpegArgs, extraCodecArgs...)
+
+		// 2. Append Video Encoder & explicit video-only quality stream controls
+		// We copy the H.264 stream directly from GStreamer, which avoids video transcoding entirely!
+		ffmpegArgs = append(ffmpegArgs,
+			"-c:v", "copy",
+		)
+
+		// 3. Append Audio Encoder & explicit audio-only controls
+		ffmpegArgs = append(ffmpegArgs,
+			"-c:a", "libopus",
+			"-b:a", "96k",
+			"-vbr:a", "on", // :a target forces this ONLY on audio
+			"-compression_level:a", "10",
+		)
+
+		// 4. Container Muxing Specs
 		ffmpegArgs = append(ffmpegArgs,
 			"-g", fmt.Sprintf("%d", gop),
-			"-f", "h264",
+			"-muxdelay", "0",
+			"-mpegts_flags", "initial_discontinuity+resend_headers",
+			"-f", "mpegts",
 			"pipe:1",
 		)
 
@@ -416,15 +570,17 @@ func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, de
 			"-f", "x11grab",
 			"-video_size", size,
 			"-framerate", fmt.Sprintf("%d", fps),
-			"-i", display,
+			"-i", display, // Input 1: Video from X11
+			"-f", "pulse", // NEW
+			"-i", audioDevice, // NEW: Input 2: System audio
 		}
 
-		// Add auto-selected hardware acceleration encoding arguments
 		ffmpegArgs = append(ffmpegArgs, "-c:v", hwCodec)
 		ffmpegArgs = append(ffmpegArgs, extraCodecArgs...)
+		ffmpegArgs = append(ffmpegArgs, "-c:a", "libopus", "-b:a", "96k", "-vbr", "on")
 		ffmpegArgs = append(ffmpegArgs,
 			"-g", fmt.Sprintf("%d", gop),
-			"-f", "h264",
+			"-f", "mpegts", // CHANGED
 			"pipe:1",
 		)
 		cmdFfmpeg = exec.CommandContext(ctx, "ffmpeg", ffmpegArgs...)

@@ -18,6 +18,6 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-EXPOSE 50001/udp
+EXPOSE 22050/udp
 
 CMD ["/bin/bash"]

@@ -20,7 +20,9 @@ import (
 
 func main() {
 	// Parse CLI flags
-	probesizeFlag := flag.Int("probesize", 32, "ffplay probesize in bytes")
+	// 32768 bytes (32KB) is usually enough to catch the MPEG-TS headers
+	probesizeFlag := flag.Int("probesize", 32768, "ffplay probesize in bytes")
+	// 100000 microseconds (100ms) gives it a brief window to analyze the streams. Default is 0 for instant startup.
 	analyzeDurationFlag := flag.Int("analyze-duration", 0, "ffplay analyze_duration in microseconds")
 	lowDelayFlag := flag.Bool("low-delay", true, "Enable ffplay low_delay flag")
 	framedropFlag := flag.Bool("framedrop", true, "Enable ffplay framedrop flag")
@@ -143,6 +145,7 @@ func main() {
 		"-loglevel", *ffplayLogLevelFlag,
 		"-probesize", fmt.Sprintf("%d", *probesizeFlag),
 		"-analyzeduration", fmt.Sprintf("%d", *analyzeDurationFlag),
+		"-fflags", "nobuffer",
 	}
 	if *lowDelayFlag {
 		ffplayArgs = append(ffplayArgs, "-flags", "low_delay")
@@ -152,7 +155,15 @@ func main() {
 	}
 	ffplayArgs = append(ffplayArgs, "-i", "pipe:0")
 
-	cmd := exec.CommandContext(ctx, "ffplay", ffplayArgs...)
+	var cmd *exec.Cmd
+	if _, err := exec.LookPath("ffplay"); err == nil {
+		cmd = exec.CommandContext(ctx, "ffplay", ffplayArgs...)
+	} else if _, err := exec.LookPath("vlc"); err == nil {
+		cmd = exec.CommandContext(ctx, "vlc", "-", "--network-caching=100")
+	} else {
+		// Fallback to hardcoded VLC on Windows
+		cmd = exec.CommandContext(ctx, `C:\Program Files\VideoLAN\VLC\vlc.exe`, "-", "--network-caching=100")
+	}
 
 	// Get ffplay stdin pipe
 	ffplayStdin, err := cmd.StdinPipe()

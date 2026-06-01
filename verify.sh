@@ -18,8 +18,8 @@ cleanup
 
 # Ensure binaries are built
 echo "Building binaries..."
-go build -o share cmd/share/main.go
-go build -o connect cmd/connect/main.go
+go build -o share cmd/share/share.go
+go build -o connect cmd/connect/connect.go
 
 echo "========================================================="
 echo "TEST 1: Headless X11 (Synthetic testsrc Mode)"
