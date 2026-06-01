@@ -1,6 +1,6 @@
 # AuraShare Streaming & Peer Connection Guide
 
-AuraShare is a zero-infrastructure, low-latency peer-to-peer screen-sharing engine designed for performance comparable to Discord. This document details how to compile, run, and configure the AuraShare Host (`share`) and Client (`connect`) binaries.
+AuraShare is a zero-infrastructure, ultra-low-latency peer-to-peer screen-sharing engine designed for performance comparable to Discord. Under the hood, it leverages unreliable, unordered **QUIC Datagrams** instead of reliable streams to completely eliminate Head-of-Line blocking, ensuring a real-time, lag-free viewing experience even over congested network links. This document details how to compile, run, and configure the AuraShare Host (`share`) and Client (`connect`) binaries.
 
 ---
 
@@ -45,7 +45,7 @@ The host handles desktop capturing, dynamic hardware-accelerated video/audio enc
 | `-codec` | `string` | `"libx264"` | The video codec element/library to use. Under Wayland/GStreamer, it auto-probes GPU hardware acceleration elements (`vaapih264enc`, `nvh264enc`, and falls back to software `x264enc`). For X11, it probes `h264_qsv`, `h264_nvenc`, `h264_vaapi`, and falls back to `libx264`. |
 | `-fps` | `int` | `60` | Captured frame rate. A setting of `60` offers butter-smooth Discord-level capture. |
 | `-size` | `string` | `"1920x1080"` | Capture resolution width x height. |
-| `-g` | `int` | `60` | GOP (Group of Pictures / Keyframe Interval). Forces a keyframe refresh every $N$ frames to allow late-joining clients to instantly synchronize. |
+| `-g` | `int` | `30` | GOP (Group of Pictures / Keyframe Interval). Default optimized to **`30`** (0.5s at 60fps) to ensure near-instantaneous startup sync times when clients connect. |
 | `-preset` | `string` | `"ultrafast"` | x264 software encoder speed preset (e.g. `ultrafast`, `superfast`, `veryfast`, `medium`). Faster presets decrease CPU load. |
 | `-tune` | `string` | `"zerolatency"` | x264 software encoder latency tuning mode. |
 | `-display` | `string` | `$DISPLAY` | X11 display string to grab (only applicable on X11 environments, e.g. `:0.0`). |

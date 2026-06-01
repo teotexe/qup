@@ -23,6 +23,21 @@ import (
 
 type CaptureBackend int
 
+type DatagramWriter struct {
+	conn *quic.Conn
+}
+
+func (dw *DatagramWriter) Write(p []byte) (int, error) {
+	err := dw.conn.SendDatagram(p)
+	if err != nil {
+		if dw.conn.Context().Err() != nil {
+			return 0, err
+		}
+		return len(p), nil
+	}
+	return len(p), nil
+}
+
 const (
 	BackendX11 CaptureBackend = iota
 	BackendWaylandFFmpeg
@@ -30,6 +45,7 @@ const (
 )
 
 func main() {
+	os.Setenv("PULSE_LATENCY_MSEC", "30")
 	// Parse CLI flags
 	portFlag := flag.Int("port", 50001, "Port to listen on")
 	displayFlag := flag.String("display", "", "X11 display to grab (e.g. :0.0). Defaults to $DISPLAY env var.")
@@ -37,7 +53,7 @@ func main() {
 	fpsFlag := flag.Int("fps", 60, "Frame rate for capturing")
 	presetFlag := flag.String("preset", "ultrafast", "x264 encoder preset (e.g., ultrafast, superfast, veryfast, medium)")
 	tuneFlag := flag.String("tune", "zerolatency", "x264 encoder tune option")
-	gopFlag := flag.Int("g", 60, "GOP (keyframe interval) size. Default is 60 for low-bandwidth 60 FPS streaming.")
+	gopFlag := flag.Int("g", 30, "GOP (keyframe interval) size. Default is 30 for low-latency fast startup connection.")
 	codecFlag := flag.String("codec", "libx264", "H.264 encoder library. Auto-probes hardware acceleration (QSV, NVENC, VA-API) by default.")
 	bitrateFlag := flag.Int("bitrate", 8000, "Target video bitrate in kbps (e.g., 8000 for 8 Mbps high-quality 1080p)")
 	testFlag := flag.Bool("test", false, "Use a synthetic test video source (lavfi testsrc) instead of X11 capture")
@@ -77,8 +93,11 @@ func main() {
 		log.Fatalf("Failed to generate TLS configuration: %v", err)
 	}
 
-	// Create listener
-	listener, err := quic.ListenAddr(fmt.Sprintf(":%d", *portFlag), tlsConfig, nil)
+	// Create listener with datagram support enabled
+	quicConfig := &quic.Config{
+		EnableDatagrams: true,
+	}
+	listener, err := quic.ListenAddr(fmt.Sprintf(":%d", *portFlag), tlsConfig, quicConfig)
 	if err != nil {
 		log.Fatalf("Failed to start QUIC listener: %v", err)
 	}
@@ -336,23 +355,17 @@ func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, de
 	defer conn.CloseWithError(0, "connection closed")
 	log.Printf("Establishing outbound media stream...")
 
-	// Create a new unidirectional stream to send video
-	stream, err := conn.OpenUniStreamSync(ctx)
-	if err != nil {
-		log.Printf("Failed to open QUIC stream: %v", err)
-		return
-	}
-	defer stream.Close()
-
-	log.Printf("Opened unidirectional QUIC stream. Spawning media capture processes...")
+	var err error
+	dgWriter := &DatagramWriter{conn: conn}
+	log.Printf("Using QUIC Datagrams. Spawning media capture processes...")
 
 	// Set up stats reporting
 	reporter := stats.NewStatsReporter(true)
 	reporter.StartReporting(2 * time.Second)
 	defer reporter.Stop()
 
-	// Wrap stream writer with stats reporter
-	proxyWriter := stats.NewProxyWriter(stream, reporter)
+	// Wrap datagram writer with stats reporter
+	proxyWriter := stats.NewProxyWriter(dgWriter, reporter)
 
 	// Determine the best capture engine to use
 	isWayland := portal.IsWayland()
@@ -432,8 +445,11 @@ func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, de
 		extraFiles = append(extraFiles, file)
 
 		ffmpegArgs := []string{
+			"-fflags", "nobuffer",
+			"-thread_queue_size", "1024",
 			"-f", "lavfi",
 			"-i", fmt.Sprintf("pipewiregrab=fd=3:node=%d", nodeID),
+			"-thread_queue_size", "1024",
 			"-f", "pulse",
 			"-i", audioDevice,
 			"-c:v", codec,
@@ -446,6 +462,9 @@ func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, de
 			"-compression_level:a", "10",
 			"-g", fmt.Sprintf("%d", gop),
 			"-muxdelay", "0",
+			"-max_interleave_delta", "100",
+			"-fps_mode", "cfr",
+			"-r", fmt.Sprintf("%d", fps),
 			"-mpegts_flags", "initial_discontinuity+resend_headers",
 			"-f", "mpegts",
 			"pipe:1",
@@ -473,6 +492,12 @@ func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, de
 		gstEncoder, gstEncoderArgs := selectBestGstH264Encoder(codec, preset, tune, gop, bitrate)
 		log.Printf("Selected GStreamer H.264 Encoder: %s, with args: %v", gstEncoder, gstEncoderArgs)
 
+		// Define explicit format caps to enforce hardware negotiation success
+		formatCaps := "video/x-raw,format=NV12"
+		if gstEncoder == "x264enc" {
+			formatCaps = "video/x-raw,format=I420"
+		}
+
 		// Build GStreamer command
 		var gstArgs []string
 		if headlessMode {
@@ -481,6 +506,7 @@ func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, de
 				"videotestsrc", "is-live=true",
 				"!", fmt.Sprintf("video/x-raw,format=I420,width=%d,height=%d,framerate=%d/1", width, height, fps),
 				"!", "videoconvert",
+				"!", formatCaps,
 			}
 			gstArgs = append(gstArgs, "!", gstEncoder)
 			gstArgs = append(gstArgs, gstEncoderArgs...)
@@ -502,9 +528,12 @@ func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, de
 			}
 			gstArgs = []string{
 				gstVerbosity,
-				"pipewiresrc", fmt.Sprintf("path=%d", nodeID), "fd=3",
+				"pipewiresrc", fmt.Sprintf("path=%d", nodeID), "fd=3", "do-timestamp=true",
 				"!", "queue", "max-size-buffers=3", "leaky=downstream",
 				"!", "videoconvert",
+				"!", formatCaps,
+				"!", "videorate",
+				"!", fmt.Sprintf("video/x-raw,framerate=%d/1", fps),
 			}
 			gstArgs = append(gstArgs, "!", gstEncoder)
 			gstArgs = append(gstArgs, gstEncoderArgs...)
@@ -529,8 +558,11 @@ func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, de
 		// Build FFmpeg encoding command
 		// 1. Build base inputs (GStreamer pipes raw H.264 stream to FFmpeg stdin)
 		ffmpegArgs := []string{
+			"-fflags", "nobuffer",
+			"-thread_queue_size", "1024",
 			"-f", "h264",
 			"-i", "pipe:0",
+			"-thread_queue_size", "1024",
 			"-f", "pulse",
 			"-i", audioDevice,
 		}
@@ -553,6 +585,9 @@ func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, de
 		ffmpegArgs = append(ffmpegArgs,
 			"-g", fmt.Sprintf("%d", gop),
 			"-muxdelay", "0",
+			"-max_interleave_delta", "100",
+			"-fps_mode", "cfr",
+			"-r", fmt.Sprintf("%d", fps),
 			"-mpegts_flags", "initial_discontinuity+resend_headers",
 			"-f", "mpegts",
 			"pipe:1",
@@ -567,10 +602,13 @@ func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, de
 	} else {
 		log.Printf("Using standard X11 capture on display %s...", display)
 		ffmpegArgs := []string{
+			"-fflags", "nobuffer",
+			"-thread_queue_size", "1024",
 			"-f", "x11grab",
 			"-video_size", size,
 			"-framerate", fmt.Sprintf("%d", fps),
 			"-i", display, // Input 1: Video from X11
+			"-thread_queue_size", "1024",
 			"-f", "pulse", // NEW
 			"-i", audioDevice, // NEW: Input 2: System audio
 		}
@@ -580,7 +618,12 @@ func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, de
 		ffmpegArgs = append(ffmpegArgs, "-c:a", "libopus", "-b:a", "96k", "-vbr", "on")
 		ffmpegArgs = append(ffmpegArgs,
 			"-g", fmt.Sprintf("%d", gop),
-			"-f", "mpegts", // CHANGED
+			"-muxdelay", "0",
+			"-max_interleave_delta", "100",
+			"-fps_mode", "cfr",
+			"-r", fmt.Sprintf("%d", fps),
+			"-mpegts_flags", "initial_discontinuity+resend_headers",
+			"-f", "mpegts",
 			"pipe:1",
 		)
 		cmdFfmpeg = exec.CommandContext(ctx, "ffmpeg", ffmpegArgs...)
@@ -688,8 +731,73 @@ func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, de
 		}
 	}()
 
-	log.Printf("Streaming H.264 desktop stream to peer...")
-	_, err = io.Copy(proxyWriter, ffmpegStdout)
+	log.Printf("Streaming H.264 desktop stream to peer (with low-latency drop-oldest ring buffer)...")
+
+	const maxCapacity = 256 // 256 chunks * 1200 bytes = ~300 KB (approx. 250ms of buffer at 8 Mbps)
+	const chunkSize = 1200
+
+	ch := make(chan []byte, maxCapacity)
+	
+	// Create a sub-context to cancel reading if the writer fails
+	subCtx, subCancel := context.WithCancel(ctx)
+	defer subCancel()
+
+	// Goroutine 1: Continuous reader from FFmpeg stdout (never blocks FFmpeg!)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer close(ch)
+		for {
+			select {
+			case <-subCtx.Done():
+				return
+			default:
+			}
+			buf := make([]byte, chunkSize)
+			n, err := ffmpegStdout.Read(buf)
+			if n > 0 {
+				chunk := buf[:n]
+				// Non-blocking drop-oldest push
+				for {
+					select {
+					case ch <- chunk:
+						goto pushed
+					default:
+						// Queue is full, discard the oldest item
+						select {
+						case <-ch:
+						default:
+						}
+					}
+				}
+			pushed:
+			}
+			if err != nil {
+				if err != io.EOF {
+					log.Printf("[Queue Reader] Error reading from FFmpeg stdout: %v", err)
+				}
+				break
+			}
+		}
+	}()
+
+	// Goroutine 2: Continuous writer to QUIC stream (pulls freshest packets)
+	writeErrChan := make(chan error, 1)
+	go func() {
+		for chunk := range ch {
+			_, err := proxyWriter.Write(chunk)
+			if err != nil {
+				writeErrChan <- err
+				subCancel() // Stop the reader
+				return
+			}
+		}
+		writeErrChan <- nil
+	}()
+
+	wg.Wait()
+	err = <-writeErrChan
 	if err != nil && err != io.EOF {
 		log.Printf("Streaming finished with error: %v", err)
 	} else {

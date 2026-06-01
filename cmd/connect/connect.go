@@ -18,7 +18,20 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
+type DatagramReader struct {
+	conn *quic.Conn
+}
+
+func (dr *DatagramReader) Read(p []byte) (int, error) {
+	payload, err := dr.conn.ReceiveDatagram(dr.conn.Context())
+	if err != nil {
+		return 0, err
+	}
+	return copy(p, payload), nil
+}
+
 func main() {
+	os.Setenv("PULSE_LATENCY_MSEC", "30")
 	// Parse CLI flags
 	// 32768 bytes (32KB) is usually enough to catch the MPEG-TS headers
 	probesizeFlag := flag.Int("probesize", 32768, "ffplay probesize in bytes")
@@ -61,28 +74,27 @@ func main() {
 
 	// Establish connection to host Bob
 	log.Printf("Connecting to host via QUIC...")
-	conn, err := quic.DialAddr(ctx, targetAddr, tlsConfig, nil)
+	quicConfig := &quic.Config{
+		EnableDatagrams: true,
+	}
+	conn, err := quic.DialAddr(ctx, targetAddr, tlsConfig, quicConfig)
 	if err != nil {
 		log.Fatalf("Failed to establish QUIC connection: %v", err)
 	}
 	defer conn.CloseWithError(0, "connection closed")
 
-	log.Printf("Connected to host %s! Waiting for inbound media stream...", conn.RemoteAddr().String())
+	log.Printf("Connected to host %s! Receiving datagrams...", conn.RemoteAddr().String())
 
-	// Accept unidirectional stream from Bob
-	stream, err := conn.AcceptUniStream(ctx)
-	if err != nil {
-		log.Fatalf("Failed to accept media stream: %v", err)
-	}
-	log.Printf("Media stream accepted. Launching ffplay rendering window...")
+	dgReader := &DatagramReader{conn: conn}
+	log.Printf("Media transport switched to QUIC Datagrams. Launching ffplay rendering window...")
 
 	// Set up stats reporting
 	reporter := stats.NewStatsReporter(false)
 	reporter.StartReporting(2 * time.Second)
 	defer reporter.Stop()
 
-	// Wrap stream reader with stats reporter
-	proxyReader := stats.NewProxyReader(stream, reporter)
+	// Wrap datagram reader with stats reporter
+	proxyReader := stats.NewProxyReader(dgReader, reporter)
 
 	if *testFlag {
 		log.Printf("╔══════════════════════════════════════════════════════════╗")
@@ -143,21 +155,34 @@ func main() {
 	// Example: ffplay -probesize 32 -analyzeduration 0 -flags low_delay -framedrop -i pipe:0
 	ffplayArgs := []string{
 		"-loglevel", *ffplayLogLevelFlag,
-		"-probesize", fmt.Sprintf("%d", *probesizeFlag),
-		"-analyzeduration", fmt.Sprintf("%d", *analyzeDurationFlag),
-		"-fflags", "nobuffer",
+		"-probesize", fmt.Sprintf("%d", *probesizeFlag), // Ensure default is 32
+		"-analyzeduration", fmt.Sprintf("%d", *analyzeDurationFlag), // Ensure default is 0
+
+		// Force immediate packet flushing and disable demuxer caching
+		"-fflags", "nobuffer+flush_packets+discardcorrupt",
+		"-flags", "low_delay",
+
+		// Core performance over quality parameters
+		"-strict", "experimental", // Allows cutting corner optimizations if available
+		"-noinfbuf", // Prevent memory queues from bloating on network hiccups
+		"-autoexit", // Cleanly kill window if stream tears down
+
+		// Clock synchronization configuration
+		"-sync", "ext", // Sync to an external/system clock, NOT the video/audio stream clock
 	}
-	if *lowDelayFlag {
-		ffplayArgs = append(ffplayArgs, "-flags", "low_delay")
-	}
+
 	if *framedropFlag {
-		ffplayArgs = append(ffplayArgs, "-framedrop")
+		// Aggressively drop frames at both the decoder AND filter/display level
+		ffplayArgs = append(ffplayArgs, "-framedrop", "-vf", "setpts=N/FRAME_RATE/TB")
 	}
+
 	ffplayArgs = append(ffplayArgs, "-i", "pipe:0")
 
 	var cmd *exec.Cmd
 	if _, err := exec.LookPath("ffplay"); err == nil {
 		cmd = exec.CommandContext(ctx, "ffplay", ffplayArgs...)
+	} else if _, err := os.Stat("ffplay.exe"); err == nil {
+		cmd = exec.CommandContext(ctx, "./ffplay.exe", ffplayArgs...)
 	} else if _, err := exec.LookPath("vlc"); err == nil {
 		cmd = exec.CommandContext(ctx, "vlc", "-", "--network-caching=100")
 	} else {
