@@ -31,12 +31,13 @@ func (dr *DatagramReader) Read(p []byte) (int, error) {
 }
 
 func main() {
-	os.Setenv("PULSE_LATENCY_MSEC", "30")
+	// os.Setenv("PULSE_LATENCY_MSEC", "30")
+	// os.Setenv("SDL_AUDIODRIVER", "pulseaudio")
 	// Parse CLI flags
-	// 32768 bytes (32KB) is usually enough to catch the MPEG-TS headers
-	probesizeFlag := flag.Int("probesize", 32768, "ffplay probesize in bytes")
-	// 100000 microseconds (100ms) gives it a brief window to analyze the streams. Default is 0 for instant startup.
-	analyzeDurationFlag := flag.Int("analyze-duration", 0, "ffplay analyze_duration in microseconds")
+	// 1048576 bytes (1MB) is recommended to catch the MPEG-TS headers reliably and avoid races
+	probesizeFlag := flag.Int("probesize", 1048576, "ffplay probesize in bytes")
+	// 1000000 microseconds (1 second) gives it a brief window to analyze the streams.
+	analyzeDurationFlag := flag.Int("analyze-duration", 1000000, "ffplay analyze_duration in microseconds")
 	lowDelayFlag := flag.Bool("low-delay", true, "Enable ffplay low_delay flag")
 	framedropFlag := flag.Bool("framedrop", true, "Enable ffplay framedrop flag")
 	ffplayLogLevelFlag := flag.String("loglevel", "warning", "ffplay log level (quiet, panic, fatal, error, warning, info, verbose, debug)")
@@ -159,7 +160,7 @@ func main() {
 		"-analyzeduration", fmt.Sprintf("%d", *analyzeDurationFlag), // Ensure default is 0
 
 		// Force immediate packet flushing and disable demuxer caching
-		"-fflags", "nobuffer+flush_packets+discardcorrupt",
+		"-fflags", "nobuffer+flush_packets",
 		"-flags", "low_delay",
 
 		// Core performance over quality parameters
@@ -168,7 +169,7 @@ func main() {
 		"-autoexit", // Cleanly kill window if stream tears down
 
 		// Clock synchronization configuration
-		"-sync", "ext", // Sync to an external/system clock, NOT the video/audio stream clock
+		"-sync", "audio", // Sync to the audio master clock for low-jitter smooth playback
 	}
 
 	if *framedropFlag {
@@ -176,7 +177,7 @@ func main() {
 		ffplayArgs = append(ffplayArgs, "-framedrop", "-vf", "setpts=N/FRAME_RATE/TB")
 	}
 
-	ffplayArgs = append(ffplayArgs, "-i", "pipe:0")
+	ffplayArgs = append(ffplayArgs, "-f", "mpegts", "-i", "pipe:0")
 
 	var cmd *exec.Cmd
 	if _, err := exec.LookPath("ffplay"); err == nil {

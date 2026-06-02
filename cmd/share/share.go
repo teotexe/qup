@@ -451,15 +451,20 @@ func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, de
 			"-i", fmt.Sprintf("pipewiregrab=fd=3:node=%d", nodeID),
 			"-thread_queue_size", "1024",
 			"-f", "pulse",
+			"-ac", "2",
+			"-ar", "48000",
 			"-i", audioDevice,
+			"-map", "0:v",
+			"-map", "1:a",
 			"-c:v", codec,
 		}
 		ffmpegArgs = append(ffmpegArgs, extraCodecArgs...)
 		ffmpegArgs = append(ffmpegArgs,
-			"-c:a", "libopus",
-			"-b:a", "96k",
-			"-vbr:a", "on",
-			"-compression_level:a", "10",
+			"-c:a", "mp2",
+			"-b:a", "128k",
+			"-ac", "2",
+			"-ar", "48000",
+			"-af", "aresample=async=1,asetpts=PTS-STARTPTS",
 			"-g", fmt.Sprintf("%d", gop),
 			"-muxdelay", "0",
 			"-max_interleave_delta", "100",
@@ -558,14 +563,22 @@ func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, de
 		// Build FFmpeg encoding command
 		// 1. Build base inputs (GStreamer pipes raw H.264 stream to FFmpeg stdin)
 		ffmpegArgs := []string{
-			"-fflags", "nobuffer",
+			"-fflags", "nobuffer+genpts",
 			"-thread_queue_size", "1024",
+			"-framerate", fmt.Sprintf("%d", fps),
 			"-f", "h264",
 			"-i", "pipe:0",
 			"-thread_queue_size", "1024",
 			"-f", "pulse",
+			"-ac", "2",
+			"-ar", "48000",
 			"-i", audioDevice,
 		}
+
+		ffmpegArgs = append(ffmpegArgs,
+			"-map", "0:v",
+			"-map", "1:a",
+		)
 
 		// 2. Append Video Encoder & explicit video-only quality stream controls
 		// We copy the H.264 stream directly from GStreamer, which avoids video transcoding entirely!
@@ -575,10 +588,11 @@ func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, de
 
 		// 3. Append Audio Encoder & explicit audio-only controls
 		ffmpegArgs = append(ffmpegArgs,
-			"-c:a", "libopus",
-			"-b:a", "96k",
-			"-vbr:a", "on", // :a target forces this ONLY on audio
-			"-compression_level:a", "10",
+			"-c:a", "mp2",
+			"-b:a", "128k",
+			"-ac", "2",
+			"-ar", "48000",
+			"-af", "aresample=async=1,asetpts=PTS-STARTPTS",
 		)
 
 		// 4. Container Muxing Specs
@@ -609,13 +623,20 @@ func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, de
 			"-framerate", fmt.Sprintf("%d", fps),
 			"-i", display, // Input 1: Video from X11
 			"-thread_queue_size", "1024",
-			"-f", "pulse", // NEW
-			"-i", audioDevice, // NEW: Input 2: System audio
+			"-f", "pulse",
+			"-ac", "2",
+			"-ar", "48000",
+			"-i", audioDevice,
 		}
+
+		ffmpegArgs = append(ffmpegArgs,
+			"-map", "0:v",
+			"-map", "1:a",
+		)
 
 		ffmpegArgs = append(ffmpegArgs, "-c:v", hwCodec)
 		ffmpegArgs = append(ffmpegArgs, extraCodecArgs...)
-		ffmpegArgs = append(ffmpegArgs, "-c:a", "libopus", "-b:a", "96k", "-vbr", "on")
+		ffmpegArgs = append(ffmpegArgs, "-c:a", "mp2", "-b:a", "128k", "-ac", "2", "-ar", "48000", "-af", "aresample=async=1,asetpts=PTS-STARTPTS")
 		ffmpegArgs = append(ffmpegArgs,
 			"-g", fmt.Sprintf("%d", gop),
 			"-muxdelay", "0",
@@ -733,8 +754,8 @@ func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, de
 
 	log.Printf("Streaming H.264 desktop stream to peer (with low-latency drop-oldest ring buffer)...")
 
-	const maxCapacity = 256 // 256 chunks * 1200 bytes = ~300 KB (approx. 250ms of buffer at 8 Mbps)
-	const chunkSize = 1200
+	const maxCapacity = 256 // 256 chunks * 1128 bytes = ~288 KB (approx. 250ms of buffer at 8 Mbps)
+	const chunkSize = 1128
 
 	ch := make(chan []byte, maxCapacity)
 	
