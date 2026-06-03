@@ -18,17 +18,7 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-type DatagramReader struct {
-	conn *quic.Conn
-}
-
-func (dr *DatagramReader) Read(p []byte) (int, error) {
-	payload, err := dr.conn.ReceiveDatagram(dr.conn.Context())
-	if err != nil {
-		return 0, err
-	}
-	return copy(p, payload), nil
-}
+// Connection main loop
 
 func main() {
 	// os.Setenv("PULSE_LATENCY_MSEC", "30")
@@ -84,18 +74,21 @@ func main() {
 	}
 	defer conn.CloseWithError(0, "connection closed")
 
-	log.Printf("Connected to host %s! Receiving datagrams...", conn.RemoteAddr().String())
+	log.Printf("Connected to host %s! Accepting media stream...", conn.RemoteAddr().String())
 
-	dgReader := &DatagramReader{conn: conn}
-	log.Printf("Media transport switched to QUIC Datagrams. Launching ffplay rendering window...")
+	stream, err := conn.AcceptUniStream(ctx)
+	if err != nil {
+		log.Fatalf("Failed to accept QUIC stream: %v", err)
+	}
+	log.Printf("Media transport switched to QUIC Stream. Launching ffplay rendering window...")
 
 	// Set up stats reporting
 	reporter := stats.NewStatsReporter(false)
 	reporter.StartReporting(2 * time.Second)
 	defer reporter.Stop()
 
-	// Wrap datagram reader with stats reporter
-	proxyReader := stats.NewProxyReader(dgReader, reporter)
+	// Wrap stream reader with stats reporter
+	proxyReader := stats.NewProxyReader(stream, reporter)
 
 	if *testFlag {
 		log.Printf("╔══════════════════════════════════════════════════════════╗")
@@ -165,7 +158,7 @@ func main() {
 
 		// Core performance over quality parameters
 		"-strict", "experimental", // Allows cutting corner optimizations if available
-		"-noinfbuf", // Prevent memory queues from bloating on network hiccups
+		"-infbuf", // Enable infinite buffer to drain network socket continuously and prevent pipe blocking
 		"-autoexit", // Cleanly kill window if stream tears down
 
 		// Clock synchronization configuration

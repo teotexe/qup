@@ -46,8 +46,8 @@ echo ""
 
 # ── Step 4: Test GStreamer videotestsrc → y4menc → stdout pipeline ──
 echo "═══ Step 4: Testing GStreamer videotestsrc → y4menc pipeline ═══"
-echo "  Running: gst-launch-1.0 videotestsrc num-buffers=5 ! video/x-raw,format=I420,width=320,height=240,framerate=5/1 ! y4menc ! fdsink fd=1 sync=false"
-BYTES=$(gst-launch-1.0 videotestsrc num-buffers=5 is-live=false \
+echo "  Running: gst-launch-1.0 -q videotestsrc num-buffers=5 ! video/x-raw,format=I420,width=320,height=240,framerate=5/1 ! y4menc ! fdsink fd=1 sync=false"
+BYTES=$(gst-launch-1.0 -q videotestsrc num-buffers=5 is-live=false \
     ! "video/x-raw,format=I420,width=320,height=240,framerate=5/1" \
     ! y4menc \
     ! fdsink fd=1 sync=false 2>/dev/null | wc -c)
@@ -61,7 +61,7 @@ echo ""
 # ── Step 5: Test GStreamer → FFmpeg chain ──
 echo "═══ Step 5: Testing GStreamer → FFmpeg (Y4M → H.264) pipeline ═══"
 echo "  Running chained pipeline..."
-H264_BYTES=$(gst-launch-1.0 videotestsrc num-buffers=30 is-live=false \
+H264_BYTES=$(gst-launch-1.0 -q videotestsrc num-buffers=30 is-live=false \
     ! "video/x-raw,format=I420,width=320,height=240,framerate=30/1" \
     ! y4menc \
     ! fdsink fd=1 sync=false 2>/dev/null | \
@@ -86,7 +86,7 @@ echo ""
 
 # ── Step 7: Test GStreamer → FFmpeg with QSV encoder ──
 echo "═══ Step 7: Testing GStreamer → FFmpeg QSV chain ═══"
-QSV_BYTES=$(gst-launch-1.0 videotestsrc num-buffers=30 is-live=false \
+QSV_BYTES=$(gst-launch-1.0 -q videotestsrc num-buffers=30 is-live=false \
     ! "video/x-raw,format=I420,width=320,height=240,framerate=30/1" \
     ! y4menc \
     ! fdsink fd=1 sync=false 2>/dev/null | \
