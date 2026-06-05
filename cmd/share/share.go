@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -94,7 +93,6 @@ func main() {
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-	var wg sync.WaitGroup
 	go func() {
 		<-sigChan
 		log.Println("Shutting down AuraShare Host...")
@@ -107,9 +105,6 @@ func main() {
 		if err != nil {
 			select {
 			case <-ctx.Done():
-				log.Println("Waiting for active media sessions to clean up...")
-				wg.Wait()
-				log.Println("AuraShare Host shutdown complete.")
 				return
 			default:
 				log.Printf("Error accepting connection: %v", err)
@@ -118,11 +113,7 @@ func main() {
 		}
 
 		log.Printf("Peer connected from: %s", conn.RemoteAddr().String())
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			handlePeer(ctx, conn, *testFlag, *headlessFlag, *debugFlag, display, *sizeFlag, *fpsFlag, *codecFlag, *gopFlag, *presetFlag, *tuneFlag, *bitrateFlag, *volumeFlag)
-		}()
+		go handlePeer(ctx, conn, *testFlag, *headlessFlag, *debugFlag, display, *sizeFlag, *fpsFlag, *codecFlag, *gopFlag, *presetFlag, *tuneFlag, *bitrateFlag, *volumeFlag)
 	}
 }
 
@@ -335,175 +326,14 @@ func appendVideoFilter(args []string, filter string) []string {
 func getGstVolumeChain(volume float64) []string {
 	var args []string
 	remaining := volume
-	for remaining > 10.0 {
-		args = append(args, "!", "volume", "volume=10.0")
-		remaining /= 10.0
+	for remaining > 5.0 {
+		args = append(args, "!", "volume", "volume=5.0")
+		remaining /= 5.0
 	}
 	if remaining > 1.0 || len(args) == 0 {
 		args = append(args, "!", "volume", fmt.Sprintf("volume=%.4f", remaining))
 	}
 	return args
-}
-
-// setupVirtualSink loads the null sink and loopback modules in PulseAudio
-func setupVirtualSink() (sinkModule, loopbackModule string, err error) {
-	// Create null sink
-	sinkModule, err = loadPulseModule("module-null-sink", "sink_name=aurashare_sink", "sink_properties=device.description=AuraShareSink")
-	if err != nil {
-		return "", "", fmt.Errorf("failed to load module-null-sink: %w", err)
-	}
-	// Create loopback to default speakers
-	loopbackModule, err = loadPulseModule("module-loopback", "source=aurashare_sink.monitor", "sink=@DEFAULT_SINK@")
-	if err != nil {
-		// Clean up the null sink if loopback failed
-		exec.Command("pactl", "unload-module", sinkModule).Run()
-		return "", "", fmt.Errorf("failed to load module-loopback: %w", err)
-	}
-	return sinkModule, loopbackModule, nil
-}
-
-func loadPulseModule(name string, args ...string) (string, error) {
-	cmdArgs := append([]string{"load-module", name}, args...)
-	cmd := exec.Command("pactl", cmdArgs...)
-	out, err := cmd.Output()
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(out)), nil
-}
-
-func findAppNameForNode(nodeID uint32) (string, error) {
-	cmd := exec.Command("pw-dump")
-	out, err := cmd.Output()
-	if err != nil {
-		return "", err
-	}
-
-	var data []map[string]interface{}
-	if err := json.Unmarshal(out, &data); err != nil {
-		return "", err
-	}
-
-	for _, item := range data {
-		idVal, ok := item["id"]
-		if !ok {
-			continue
-		}
-		var id float64
-		switch v := idVal.(type) {
-		case float64:
-			id = v
-		case int:
-			id = float64(v)
-		}
-
-		if uint32(id) == nodeID {
-			info, ok := item["info"].(map[string]interface{})
-			if !ok {
-				continue
-			}
-			props, ok := info["props"].(map[string]interface{})
-			if !ok {
-				continue
-			}
-
-			for _, key := range []string{
-				"window.app-id",
-				"window.title",
-				"node.description",
-				"node.name",
-				"application.name",
-				"application.id",
-				"pipewire.access.portal.app_id",
-			} {
-				if val, ok := props[key].(string); ok && val != "" {
-					valLower := strings.ToLower(val)
-					// Skip generic infrastructure names that don't identify the application
-					if !strings.Contains(valLower, "screencast") &&
-						!strings.Contains(valLower, "desktop-portal") &&
-						!strings.Contains(valLower, "pipewire") &&
-						!strings.Contains(valLower, "wireplumber") {
-						return val, nil
-					}
-				}
-			}
-		}
-	}
-	return "", fmt.Errorf("node not found or no metadata")
-}
-
-func routeAppAudioLoop(ctx context.Context, appName string) {
-	log.Printf("[Audio Router] Starting monitoring loop for app: %s", appName)
-	appNameLower := strings.ToLower(appName)
-	movedInputs := make(map[int]bool)
-
-	for {
-		select {
-		case <-ctx.Done():
-			log.Println("[Audio Router] Monitoring loop stopped.")
-			return
-		case <-time.After(1 * time.Second):
-			cmd := exec.Command("pactl", "-f", "json", "list", "sink-inputs")
-			out, err := cmd.Output()
-			if err != nil {
-				continue
-			}
-
-			if len(strings.TrimSpace(string(out))) <= 2 {
-				continue
-			}
-
-			var inputs []map[string]interface{}
-			if err := json.Unmarshal(out, &inputs); err != nil {
-				continue
-			}
-
-			for _, input := range inputs {
-				properties, ok := input["properties"].(map[string]interface{})
-				if !ok {
-					continue
-				}
-
-				matched := false
-				var matchReason string
-
-				for _, propKey := range []string{"application.process.binary", "application.name", "application.icon_name"} {
-					if val, ok := properties[propKey].(string); ok && val != "" {
-						valLower := strings.ToLower(val)
-						if strings.Contains(appNameLower, valLower) || strings.Contains(valLower, appNameLower) {
-							matched = true
-							matchReason = fmt.Sprintf("%s=%s", propKey, val)
-							break
-						}
-					}
-				}
-
-				if matched {
-					idxVal, ok := input["index"]
-					if !ok {
-						continue
-					}
-					var idx int
-					switch v := idxVal.(type) {
-					case float64:
-						idx = int(v)
-					case int:
-						idx = v
-					}
-
-					if movedInputs[idx] {
-						continue
-					}
-
-					log.Printf("[Audio Router] Found matching audio stream (Index: %d, Reason: %s). Moving to aurashare_sink...", idx, matchReason)
-					err := exec.Command("pactl", "move-sink-input", fmt.Sprintf("%d", idx), "aurashare_sink").Run()
-					if err == nil {
-						movedInputs[idx] = true
-					}
-				}
-			}
-		}
-	}
 }
 
 func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, debugMode bool, display, size string, fps int, codec string, gop int, preset, tune string, bitrate int, volume float64) {
@@ -538,20 +368,6 @@ func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, de
 
 	log.Printf("Selected capture engine: %s", backendName)
 
-	audioDevice := getDefaultPulseAudioMonitor()
-
-	var sinkModuleID, loopbackModuleID string
-	defer func() {
-		if sinkModuleID != "" {
-			log.Println("[Audio] Unloading virtual null sink module...")
-			exec.Command("pactl", "unload-module", sinkModuleID).Run()
-		}
-		if loopbackModuleID != "" {
-			log.Println("[Audio] Unloading loopback module...")
-			exec.Command("pactl", "unload-module", loopbackModuleID).Run()
-		}
-	}()
-
 	var nodeID uint32
 	var pwFD int = -1
 	var sess *portal.ScreenCastSession
@@ -571,35 +387,6 @@ func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, de
 				backend = BackendX11
 			} else {
 				log.Printf("ScreenCast portal handshake succeeded! PipeWire Node ID: %d, FD: %d", nodeID, pwFD)
-
-				// Query the PipeWire graph to find the window application name (with retries for propagation delay)
-				var appName string
-				var appErr error
-				for i := 0; i < 6; i++ {
-					appName, appErr = findAppNameForNode(nodeID)
-					if appErr == nil && appName != "" {
-						break
-					}
-					log.Printf("[Audio] PipeWire node metadata not ready yet, retrying in 100ms... (attempt %d/6)", i+1)
-					time.Sleep(100 * time.Millisecond)
-				}
-
-				if appErr == nil && appName != "" {
-					log.Printf("[Audio] Shared stream corresponds to app: %s", appName)
-
-					// Setup the virtual audio sink and loopback
-					var setupErr error
-					sinkModuleID, loopbackModuleID, setupErr = setupVirtualSink()
-					if setupErr == nil {
-						audioDevice = "aurashare_sink.monitor"
-						log.Printf("[Audio] Successfully configured app-only audio capture via: %s", audioDevice)
-						go routeAppAudioLoop(ctx, appName)
-					} else {
-						log.Printf("[Audio] Failed to setup app-only audio sink: %v. Falling back to default sink.", setupErr)
-					}
-				} else {
-					log.Printf("[Audio] Screen/Desktop shared (or no app metadata found: %v). Capturing system audio.", appErr)
-				}
 			}
 		}
 	}
@@ -624,7 +411,9 @@ func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, de
 		log.Printf("[Debug] Selected encoder: %s, extra args: %v", hwCodec, extraCodecArgs)
 	}
 
-	log.Printf("[Audio] Selected PulseAudio monitor source: %s", audioDevice)
+	// Dynamically discover default PulseAudio monitor source name
+	audioDevice := getDefaultPulseAudioMonitor()
+	log.Printf("[Audio] Dynamically selected PulseAudio monitor source: %s", audioDevice)
 
 	if testMode {
 		log.Println("Using synthetic test video source (lavfi testsrc)...")

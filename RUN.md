@@ -45,6 +45,7 @@ The host handles desktop capturing, dynamic hardware-accelerated video/audio enc
 | `-codec` | `string` | `"libx264"` | The video codec element/library to use. Under Wayland/GStreamer, it auto-probes GPU hardware acceleration elements (`vaapih264enc`, `nvh264enc`, and falls back to software `x264enc`). For X11, it probes `h264_qsv`, `h264_nvenc`, `h264_vaapi`, and falls back to `libx264`. |
 | `-fps` | `int` | `60` | Captured frame rate. A setting of `60` offers butter-smooth Discord-level capture. |
 | `-size` | `string` | `"1920x1080"` | Capture resolution width x height. |
+| `-volume` | `string` | `"10.0"` | Set volume. |
 | `-g` | `int` | `30` | GOP (Group of Pictures / Keyframe Interval). Default optimized to **`30`** (0.5s at 60fps) to ensure near-instantaneous startup sync times when clients connect. |
 | `-preset` | `string` | `"ultrafast"` | x264 software encoder speed preset (e.g. `ultrafast`, `superfast`, `veryfast`, `medium`). Faster presets decrease CPU load. |
 | `-tune` | `string` | `"zerolatency"` | x264 software encoder latency tuning mode. |
@@ -53,6 +54,7 @@ The host handles desktop capturing, dynamic hardware-accelerated video/audio enc
 | `-mock-portal` | `bool` | `false` | Forces a mock D-Bus ScreenCast portal backend in the background (used for testing DBus/Wayland handshake without prompts). |
 | `-headless` | `bool` | `false` | Forces GStreamer to run with `videotestsrc` in a headless mode. Bypasses D-Bus popups, testing the GStreamer $\rightarrow$ FFmpeg $\rightarrow$ QUIC loopback. |
 | `-debug` | `bool` | `false` | Enables verbose debug logs showing full spawned GStreamer/FFmpeg command lines, element properties, and thread logs. |
+
 
 ---
 
