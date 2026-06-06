@@ -143,7 +143,7 @@ func supportsGStreamerPipeWire() bool {
 		return false
 	}
 	// Check for at least one H.264 encoder
-	return supportsGstElement("vaapih264enc") || supportsGstElement("nvh264enc") || supportsGstElement("x264enc")
+	return supportsGstElement("vah264enc") || supportsGstElement("nvh264enc") || supportsGstElement("x264enc")
 }
 
 // supportsEncoder checks if the local ffmpeg binary supports a specific encoder.
@@ -245,14 +245,14 @@ func selectBestH264Encoder(requested string, defaultPreset, defaultTune string, 
 // selectBestGstH264Encoder selects the best available H.264 encoder element for GStreamer.
 func selectBestGstH264Encoder(codec, preset, tune string, gop int, bitrate int) (string, []string) {
 	// If the user requested a specific GStreamer encoder, respect it
-	if codec == "vaapih264enc" || codec == "nvh264enc" || codec == "x264enc" {
+	if codec == "vah264enc" || codec == "nvh264enc" || codec == "x264enc" {
 		return codec, getGstEncoderArgs(codec, preset, tune, gop, bitrate)
 	}
 
 	// 1. Check for VA-API (Intel/AMD hardware acceleration)
-	if supportsGstElement("vaapih264enc") {
-		log.Println("[GStreamer HW Accel] Intel/AMD VA-API hardware encoder (vaapih264enc) verified and activated!")
-		return "vaapih264enc", getGstEncoderArgs("vaapih264enc", preset, tune, gop, bitrate)
+	if supportsGstElement("vah264enc") {
+		log.Println("[GStreamer HW Accel] Intel/AMD VA-API hardware encoder (vah264enc) verified and activated!")
+		return "vah264enc", getGstEncoderArgs("vah264enc", preset, tune, gop, bitrate)
 	}
 
 	// 2. Check for NVIDIA NVENC
@@ -269,12 +269,12 @@ func selectBestGstH264Encoder(codec, preset, tune string, gop int, bitrate int) 
 // getGstEncoderArgs returns low-latency properties optimized for each GStreamer H.264 encoder.
 func getGstEncoderArgs(encoder, preset, tune string, gop int, bitrate int) []string {
 	switch encoder {
-	case "vaapih264enc":
+	case "vah264enc":
 		return []string{
-			fmt.Sprintf("keyframe-period=%d", gop),
-			"max-bframes=0",
-			fmt.Sprintf("bitrate=%d", bitrate),
-		}
+				fmt.Sprintf("key-int-max=%d", gop),
+				"b-frames=0",
+				fmt.Sprintf("bitrate=%d", bitrate),
+			}
 	case "nvh264enc":
 		return []string{
 			fmt.Sprintf("gop-size=%d", gop),

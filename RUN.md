@@ -42,7 +42,7 @@ The host handles desktop capturing, dynamic hardware-accelerated video/audio enc
 | :--- | :--- | :--- | :--- |
 | `-port` | `int` | `50001` | The UDP port to open and listen on for incoming client QUIC connections. |
 | `-bitrate` | `int` | `8000` | Target video bitrate in kbps. Defaults to **`8000`** (8 Mbps) for beautiful, pixel-free 1080p 60fps streams. |
-| `-codec` | `string` | `"libx264"` | The video codec element/library to use. Under Wayland/GStreamer, it auto-probes GPU hardware acceleration elements (`vaapih264enc`, `nvh264enc`, and falls back to software `x264enc`). For X11, it probes `h264_qsv`, `h264_nvenc`, `h264_vaapi`, and falls back to `libx264`. |
+| `-codec` | `string` | `"libx264"` | The video codec element/library to use. Under Wayland/GStreamer, it auto-probes GPU hardware acceleration elements (`vah264enc`, `nvh264enc`, and falls back to software `x264enc`). For X11, it probes `h264_qsv`, `h264_nvenc`, `h264_vaapi`, and falls back to `libx264`. |
 | `-fps` | `int` | `60` | Captured frame rate. A setting of `60` offers butter-smooth Discord-level capture. |
 | `-size` | `string` | `"1920x1080"` | Capture resolution width x height. |
 | `-volume` | `string` | `"10.0"` | Set volume. |
