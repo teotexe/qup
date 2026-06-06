@@ -322,6 +322,20 @@ func appendVideoFilter(args []string, filter string) []string {
 	return append(args, "-vf", filter)
 }
 
+// prependVideoFilter prepends a filter to the existing -vf argument in args, or adds -vf filter if not present.
+func prependVideoFilter(args []string, filter string) []string {
+	for i, arg := range args {
+		if arg == "-vf" && i+1 < len(args) {
+			// Copy args to avoid modifying the original slice in place
+			newArgs := make([]string, len(args))
+			copy(newArgs, args)
+			newArgs[i+1] = filter + "," + newArgs[i+1]
+			return newArgs
+		}
+	}
+	return append(args, "-vf", filter)
+}
+
 // getGstVolumeChain returns a sliced chain of GStreamer volume elements to bypass the 10.0 limit per element.
 func getGstVolumeChain(volume float64) []string {
 	var args []string
@@ -447,7 +461,9 @@ func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, de
 			"-map", "1:a",
 			"-c:v", codec,
 		}
-		videoArgs := appendVideoFilter(extraCodecArgs, "setpts=PTS-STARTPTS")
+		scalePadFilter := fmt.Sprintf("scale=w=%d:h=%d:force_original_aspect_ratio=decrease,pad=w=%d:h=%d:x=(ow-iw)/2:y=(oh-ih)/2:color=black", width, height, width, height)
+		videoArgs := prependVideoFilter(extraCodecArgs, scalePadFilter)
+		videoArgs = appendVideoFilter(videoArgs, "setpts=PTS-STARTPTS")
 		ffmpegArgs = append(ffmpegArgs, videoArgs...)
 		ffmpegArgs = append(ffmpegArgs,
 			"-c:a", "aac",
@@ -513,7 +529,8 @@ func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, de
 				"pipewiresrc", fmt.Sprintf("path=%d", nodeID), "fd=3", "do-timestamp=true", "keepalive-time=100",
 				"!", "queue", "max-size-buffers=3", "leaky=downstream",
 				"!", "videoconvert",
-				"!", formatCaps,
+				"!", "videoscale",
+				"!", fmt.Sprintf("%s,width=%d,height=%d", formatCaps, width, height),
 				"!", "videorate",
 				"!", fmt.Sprintf("video/x-raw,framerate=%d/1", fps),
 				"!", gstEncoder,
