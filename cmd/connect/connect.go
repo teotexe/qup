@@ -166,8 +166,8 @@ func main() {
 	}
 
 	if *framedropFlag {
-		// Aggressively drop frames at both the decoder AND filter/display level
-		ffplayArgs = append(ffplayArgs, "-framedrop", "-vf", "setpts=N/FRAME_RATE/TB")
+		// Aggressively drop frames at the decoder level
+		ffplayArgs = append(ffplayArgs, "-framedrop")
 	}
 
 	ffplayArgs = append(ffplayArgs, "-f", "mpegts", "-i", "pipe:0")

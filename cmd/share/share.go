@@ -510,7 +510,7 @@ func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, de
 			extraFiles = append(extraFiles, pwFile)
 
 			videoArgs = []string{
-				"pipewiresrc", fmt.Sprintf("path=%d", nodeID), "fd=3", "do-timestamp=true",
+				"pipewiresrc", fmt.Sprintf("path=%d", nodeID), "fd=3", "do-timestamp=true", "keepalive-time=100",
 				"!", "queue", "max-size-buffers=3", "leaky=downstream",
 				"!", "videoconvert",
 				"!", formatCaps,
