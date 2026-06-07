@@ -21,17 +21,21 @@ import (
 // Connection main loop
 
 func main() {
-	// os.Setenv("PULSE_LATENCY_MSEC", "30")
-	// os.Setenv("SDL_AUDIODRIVER", "pulseaudio")
+	// Set underlying defaults for optimal low-latency streaming profiles
+	os.Setenv("PULSE_LATENCY_MSEC", "30")
+
 	// Parse CLI flags
-	// 1048576 bytes (1MB) is recommended to catch the MPEG-TS headers reliably and avoid races
-	probesizeFlag := flag.Int("probesize", 1048576, "ffplay probesize in bytes")
-	// 1000000 microseconds (1 second) gives it a brief window to analyze the streams.
-	analyzeDurationFlag := flag.Int("analyze-duration", 1000000, "ffplay analyze_duration in microseconds")
+	// 5000000 bytes (5MB) ensures we catch a keyframe even on high bitrate streams so the window opens
+	probesizeFlag := flag.Int("probesize", 5000000, "ffplay probesize in bytes")
+	// 2000000 microseconds (2 seconds) gives it enough time to analyze the stream
+	analyzeDurationFlag := flag.Int("analyze-duration", 2000000, "ffplay analyze_duration in microseconds")
+
 	lowDelayFlag := flag.Bool("low-delay", true, "Enable ffplay low_delay flag")
 	framedropFlag := flag.Bool("framedrop", true, "Enable ffplay framedrop flag")
 	ffplayLogLevelFlag := flag.String("loglevel", "warning", "ffplay log level (quiet, panic, fatal, error, warning, info, verbose, debug)")
 	testFlag := flag.Bool("test", false, "Run in headless test mode, printing data receipt diagnostics instead of spawning ffplay")
+	hwaccelFlag := flag.String("hwaccel", "vaapi", "Hardware acceleration method for ffplay decoding (vaapi, none)")
+	hwaccelDeviceFlag := flag.String("hwaccel-device", "/dev/dri/renderD128", "DRI render node for hardware acceleration")
 	flag.Parse()
 
 	// The peer address should be the first positional argument
@@ -45,8 +49,8 @@ func main() {
 	targetAddr := args[0]
 
 	log.Printf("Starting AuraShare Receiver (Alice) connecting to %s...", targetAddr)
-	log.Printf("Receiver config: TestMode=%v, probesize=%d, analyze_duration=%d, low_delay=%v, framedrop=%v, loglevel=%s",
-		*testFlag, *probesizeFlag, *analyzeDurationFlag, *lowDelayFlag, *framedropFlag, *ffplayLogLevelFlag)
+	log.Printf("Receiver config: TestMode=%v, probesize=%d, analyze_duration=%d, low_delay=%v, framedrop=%v, loglevel=%s, hwaccel=%s",
+		*testFlag, *probesizeFlag, *analyzeDurationFlag, *lowDelayFlag, *framedropFlag, *ffplayLogLevelFlag, *hwaccelFlag)
 
 	// Create client TLS config
 	tlsConfig := crypto.GenerateClientTLSConfig()
@@ -92,9 +96,9 @@ func main() {
 
 	if *testFlag {
 		log.Printf("╔══════════════════════════════════════════════════════════╗")
-		log.Printf("║  HEADLESS TEST MODE - No video window will appear       ║")
-		log.Printf("║  Monitoring data receipt from sender...                 ║")
-		log.Printf("║  Look for [Receiver] Rate lines to confirm data flow   ║")
+		log.Printf("║  HEADLESS TEST MODE - No video window will appear        ║")
+		log.Printf("║  Monitoring data receipt from sender...                  ║")
+		log.Printf("║  Look for [Receiver] Rate lines to confirm data flow     ║")
 		log.Printf("╚══════════════════════════════════════════════════════════╝")
 
 		// Read data in chunks and report receipt
@@ -146,27 +150,37 @@ func main() {
 	log.Printf("Launching ffplay rendering window...")
 
 	// Build ffplay command
-	// Example: ffplay -probesize 32 -analyzeduration 0 -flags low_delay -framedrop -i pipe:0
 	ffplayArgs := []string{
 		"-loglevel", *ffplayLogLevelFlag,
-		"-probesize", fmt.Sprintf("%d", *probesizeFlag), // Ensure default is 32
-		"-analyzeduration", fmt.Sprintf("%d", *analyzeDurationFlag), // Ensure default is 0
+	}
+
+	if *hwaccelFlag != "none" {
+		log.Printf("Enabling %s hardware-accelerated decoding (device: %s)", *hwaccelFlag, *hwaccelDeviceFlag)
+		ffplayArgs = append(ffplayArgs, "-hwaccel", *hwaccelFlag)
+
+		// CRITICAL FIX: Download the hardware frames to system memory before rendering.
+		// This forces ffplay to bypass the broken Vulkan pipeline and open the window.
+		ffplayArgs = append(ffplayArgs, "-vf", "hwdownload,format=nv12")
+	}
+
+	ffplayArgs = append(ffplayArgs,
+		"-probesize", fmt.Sprintf("%d", *probesizeFlag),
+		"-analyzeduration", fmt.Sprintf("%d", *analyzeDurationFlag),
 
 		// Force immediate packet flushing and disable demuxer caching
 		"-fflags", "nobuffer+flush_packets",
 		"-flags", "low_delay",
 
 		// Core performance over quality parameters
-		"-strict", "experimental", // Allows cutting corner optimizations if available
-		"-infbuf", // Enable infinite buffer to drain network socket continuously and prevent pipe blocking
-		"-autoexit", // Cleanly kill window if stream tears down
+		"-strict", "experimental",
+		"-infbuf",
+		"-autoexit",
 
 		// Clock synchronization configuration
-		"-sync", "audio", // Sync to the audio master clock for low-jitter smooth playback
-	}
+		"-sync", "audio",
+	)
 
 	if *framedropFlag {
-		// Aggressively drop frames at the decoder level
 		ffplayArgs = append(ffplayArgs, "-framedrop")
 	}
 
@@ -180,8 +194,16 @@ func main() {
 	} else if _, err := exec.LookPath("vlc"); err == nil {
 		cmd = exec.CommandContext(ctx, "vlc", "-", "--network-caching=100")
 	} else {
-		// Fallback to hardcoded VLC on Windows
 		cmd = exec.CommandContext(ctx, `C:\Program Files\VideoLAN\VLC\vlc.exe`, "-", "--network-caching=100")
+	}
+
+	// CRITICAL FIX: Ensure environment variables correctly append to the current OS context
+	cmd.Env = os.Environ()
+	if *hwaccelFlag == "vaapi" {
+		cmd.Env = append(cmd.Env,
+			"LIBVA_DRIVER_NAME=iHD",
+			fmt.Sprintf("LIBVA_DEVICE=%s", *hwaccelDeviceFlag),
+		)
 	}
 
 	// Get ffplay stdin pipe
