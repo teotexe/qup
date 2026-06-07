@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"flag"
@@ -50,6 +51,15 @@ func main() {
 	audioAppFlag := flag.String("audio-app", "", "Name of the app to capture audio from (e.g., 'Firefox'). If empty, falls back to system audio.")
 	flag.Parse()
 
+	audioApp := *audioAppFlag
+	if audioApp == "" && !*testFlag && !*headlessFlag {
+		if isTerminal(os.Stdin) {
+			audioApp = promptForAudioApp()
+		} else {
+			log.Println("[AudioApp] Non-interactive environment detected or -audio-app flag omitted. Defaulting to system audio.")
+		}
+	}
+
 	display := *displayFlag
 	if display == "" {
 		display = os.Getenv("DISPLAY")
@@ -60,7 +70,7 @@ func main() {
 
 	log.Printf("Starting AuraShare Host (Bob) on port %d...", *portFlag)
 	log.Printf("Capture config: TestMode=%v, Headless=%v, Debug=%v, Display=%s, Size=%s, FPS=%d, Codec=%s, GOP=%d, Preset=%s, Tune=%s, Bitrate=%d, Volume=%.1f, AudioApp=%s",
-		*testFlag, *headlessFlag, *debugFlag, display, *sizeFlag, *fpsFlag, *codecFlag, *gopFlag, *presetFlag, *tuneFlag, *bitrateFlag, *volumeFlag, *audioAppFlag)
+		*testFlag, *headlessFlag, *debugFlag, display, *sizeFlag, *fpsFlag, *codecFlag, *gopFlag, *presetFlag, *tuneFlag, *bitrateFlag, *volumeFlag, audioApp)
 
 	// Create main context
 	ctx, cancel := context.WithCancel(context.Background())
@@ -115,7 +125,7 @@ func main() {
 		}
 
 		log.Printf("Peer connected from: %s", conn.RemoteAddr().String())
-		go handlePeer(ctx, conn, *testFlag, *headlessFlag, *debugFlag, display, *sizeFlag, *fpsFlag, *codecFlag, *gopFlag, *presetFlag, *tuneFlag, *bitrateFlag, *volumeFlag, *audioAppFlag)
+		go handlePeer(ctx, conn, *testFlag, *headlessFlag, *debugFlag, display, *sizeFlag, *fpsFlag, *codecFlag, *gopFlag, *presetFlag, *tuneFlag, *bitrateFlag, *volumeFlag, audioApp)
 	}
 }
 
@@ -1004,4 +1014,131 @@ func equalSlices(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+func isTerminal(f *os.File) bool {
+	stat, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return (stat.Mode() & os.ModeCharDevice) != 0
+}
+
+func getActiveAudioApps() ([]string, error) {
+	cmd := exec.Command("pw-dump")
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("failed to run pw-dump: %w", err)
+	}
+
+	var objects []struct {
+		ID   uint32 `json:"id"`
+		Type string `json:"type"`
+		Info *struct {
+			Props map[string]interface{} `json:"props"`
+		} `json:"info"`
+	}
+
+	if err := json.Unmarshal(output, &objects); err != nil {
+		return nil, fmt.Errorf("failed to parse pw-dump JSON: %w", err)
+	}
+
+	uniqueApps := make(map[string]bool)
+	var apps []string
+
+	for _, obj := range objects {
+		if obj.Type != "PipeWire:Interface:Node" {
+			continue
+		}
+		if obj.Info == nil || obj.Info.Props == nil {
+			continue
+		}
+		props := obj.Info.Props
+
+		// Verify media class is "Stream/Output/Audio"
+		mediaClassVal, ok := props["media.class"]
+		if !ok {
+			continue
+		}
+		mediaClass, ok := mediaClassVal.(string)
+		if !ok || mediaClass != "Stream/Output/Audio" {
+			continue
+		}
+
+		var appName string
+		if nameVal, ok := props["application.name"]; ok {
+			if nameStr, ok := nameVal.(string); ok && nameStr != "" {
+				appName = nameStr
+			}
+		}
+		if appName == "" {
+			if binaryVal, ok := props["application.process.binary"]; ok {
+				if binaryStr, ok := binaryVal.(string); ok && binaryStr != "" {
+					appName = binaryStr
+				}
+			}
+		}
+
+		if appName != "" {
+			if !uniqueApps[appName] {
+				uniqueApps[appName] = true
+				apps = append(apps, appName)
+			}
+		}
+	}
+
+	return apps, nil
+}
+
+func promptForAudioApp() string {
+	apps, err := getActiveAudioApps()
+	if err != nil {
+		log.Printf("[AudioApp] Warning: failed to query active audio apps: %v", err)
+	}
+
+	reader := bufio.NewReader(os.Stdin)
+
+	for {
+		fmt.Println("\nSelect an audio source to share:")
+		fmt.Println("[0] Default System Audio")
+		for i, app := range apps {
+			fmt.Printf("[%d] %s (Active)\n", i+1, app)
+		}
+		manualIdx := len(apps) + 1
+		fmt.Printf("[%d] Type application name manually (for muted apps)\n", manualIdx)
+		fmt.Print("Enter choice: ")
+
+		choiceStr, err := reader.ReadString('\n')
+		if err != nil {
+			log.Printf("[AudioApp] Error reading input: %v. Defaulting to system audio.", err)
+			return ""
+		}
+		choiceStr = strings.TrimSpace(choiceStr)
+		if choiceStr == "" {
+			continue
+		}
+
+		var choice int
+		_, err = fmt.Sscanf(choiceStr, "%d", &choice)
+		if err != nil {
+			fmt.Println("Invalid choice. Please enter a number.")
+			continue
+		}
+
+		if choice == 0 {
+			return ""
+		} else if choice > 0 && choice <= len(apps) {
+			return apps[choice-1]
+		} else if choice == manualIdx {
+			fmt.Print("Enter application name: ")
+			nameStr, err := reader.ReadString('\n')
+			if err != nil {
+				log.Printf("[AudioApp] Error reading input: %v. Defaulting to system audio.", err)
+				return ""
+			}
+			return strings.TrimSpace(nameStr)
+		} else {
+			fmt.Printf("Invalid choice. Please choose between 0 and %d.\n", manualIdx)
+		}
+	}
 }
