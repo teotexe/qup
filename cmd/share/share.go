@@ -444,6 +444,7 @@ func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, de
 
 	var virtualSinkModuleID string
 	if audioApp != "" {
+		cleanupStaleNullSinks()
 		cmdSink := exec.Command("pactl", "load-module", "module-null-sink", "sink_name=AuraShare_AppCapture", "sink_properties=device.description=\"AuraShare_AppCapture\"")
 		output, err := cmdSink.Output()
 		if err != nil {
@@ -978,9 +979,13 @@ func linkAppAudioToSink(ctx context.Context, appName string) {
 
 			// Perform link
 			log.Printf("[Watcher] Application '%s' audio ports discovered: %v. Linking to AuraShare_AppCapture...", appName, ports)
-			
-			// Map first port to Left (playback_FL) and second port to Right (playback_FR)
-			targets := []string{"AuraShare_AppCapture:playback_FL", "AuraShare_AppCapture:playback_FR"}
+
+			// Discover the virtual sink's playback ports dynamically
+			targets, err := getSinkPlaybackPorts("AuraShare_AppCapture")
+			if err != nil {
+				log.Printf("[Watcher] Failed to find playback ports for AuraShare_AppCapture: %v. Retrying in next cycle...", err)
+				continue
+			}
 			
 			for i, port := range ports {
 				target := targets[0] // Fallback to Left if more than 2 ports
@@ -1141,4 +1146,161 @@ func promptForAudioApp() string {
 			fmt.Printf("Invalid choice. Please choose between 0 and %d.\n", manualIdx)
 		}
 	}
+}
+
+// cleanupStaleNullSinks unloads any existing AuraShare_AppCapture virtual null sinks.
+func cleanupStaleNullSinks() {
+	cmd := exec.Command("pactl", "list", "short", "modules")
+	output, err := cmd.Output()
+	if err != nil {
+		return
+	}
+
+	scanner := bufio.NewScanner(strings.NewReader(string(output)))
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.Contains(line, "module-null-sink") && strings.Contains(line, "sink_name=AuraShare_AppCapture") {
+			fields := strings.Fields(line)
+			if len(fields) > 0 {
+				moduleID := fields[0]
+				log.Printf("[AudioApp] Unloading stale virtual null sink module ID: %s", moduleID)
+				_ = exec.Command("pactl", "unload-module", moduleID).Run()
+			}
+		}
+	}
+}
+
+// getSinkPlaybackPorts queries pw-dump for the input (playback) port IDs of the given sink.
+func getSinkPlaybackPorts(sinkName string) ([]string, error) {
+	cmd := exec.Command("pw-dump")
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("failed to run pw-dump: %w", err)
+	}
+
+	var objects []struct {
+		ID   uint32 `json:"id"`
+		Type string `json:"type"`
+		Info *struct {
+			Props map[string]interface{} `json:"props"`
+		} `json:"info"`
+	}
+
+	if err := json.Unmarshal(output, &objects); err != nil {
+		return nil, fmt.Errorf("failed to parse pw-dump JSON: %w", err)
+	}
+
+	// 1. Find Node ID for the sink
+	var sinkNodeID uint32
+	foundNode := false
+	sinkNameLower := strings.ToLower(sinkName)
+
+	for _, obj := range objects {
+		if obj.Type != "PipeWire:Interface:Node" {
+			continue
+		}
+		if obj.Info == nil || obj.Info.Props == nil {
+			continue
+		}
+		props := obj.Info.Props
+
+		mediaClassVal, ok := props["media.class"]
+		if !ok {
+			continue
+		}
+		mediaClass, ok := mediaClassVal.(string)
+		if !ok || mediaClass != "Audio/Sink" {
+			continue
+		}
+
+		if nodeNameVal, ok := props["node.name"]; ok {
+			if nodeNameStr, ok := nodeNameVal.(string); ok {
+				if strings.ToLower(nodeNameStr) == sinkNameLower {
+					sinkNodeID = obj.ID
+					foundNode = true
+					break
+				}
+			}
+		}
+	}
+
+	if !foundNode {
+		return nil, fmt.Errorf("could not find sink node: %s", sinkName)
+	}
+
+	// 2. Find all input (playback) Port IDs for this Node ID
+	var portIDs []string
+	var playbackFL, playbackFR string
+
+	for _, obj := range objects {
+		if obj.Type != "PipeWire:Interface:Port" {
+			continue
+		}
+		if obj.Info == nil || obj.Info.Props == nil {
+			continue
+		}
+		props := obj.Info.Props
+
+		nodeIDVal, ok := props["node.id"]
+		if !ok {
+			continue
+		}
+
+		var portNodeID uint32
+		switch v := nodeIDVal.(type) {
+		case float64:
+			portNodeID = uint32(v)
+		case int:
+			portNodeID = uint32(v)
+		case uint32:
+			portNodeID = v
+		default:
+			continue
+		}
+
+		if portNodeID != sinkNodeID {
+			continue
+		}
+
+		portDirVal, ok := props["port.direction"]
+		if !ok {
+			continue
+		}
+		portDir, ok := portDirVal.(string)
+		if !ok || portDir != "in" {
+			continue
+		}
+
+		portNameVal, ok := props["port.name"]
+		if !ok {
+			continue
+		}
+		portName, ok := portNameVal.(string)
+		if !ok {
+			continue
+		}
+
+		if portName == "playback_FL" {
+			playbackFL = fmt.Sprintf("%d", obj.ID)
+		} else if portName == "playback_FR" {
+			playbackFR = fmt.Sprintf("%d", obj.ID)
+		} else {
+			portIDs = append(portIDs, fmt.Sprintf("%d", obj.ID))
+		}
+	}
+
+	var result []string
+	if playbackFL != "" {
+		result = append(result, playbackFL)
+	}
+	if playbackFR != "" {
+		result = append(result, playbackFR)
+	}
+	result = append(result, portIDs...)
+
+	if len(result) == 0 {
+		return nil, fmt.Errorf("no playback ports found for sink node: %d", sinkNodeID)
+	}
+
+	return result, nil
 }

@@ -1,1 +1,23 @@
-tirrenia/
+# Binaries
+share
+connect
+*.exe
+*.exe.dbg
+*.executable
+
+# Test logs
+*.log
+
+# Go workspace
+go.work
+go.work.sum
+
+# OS and IDE files
+.DS_Store
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
