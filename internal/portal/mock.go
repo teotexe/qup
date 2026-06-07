@@ -66,6 +66,12 @@ func (m *MockScreenCast) Start(session dbus.ObjectPath, parentWindow string, opt
 		streams := []mockStream{
 			{
 				NodeID:  uint32(42),
+				Options: map[string]dbus.Variant{
+					"source_type": dbus.MakeVariant(uint32(2)), // 2 represents WINDOW
+				},
+			},
+			{
+				NodeID:  uint32(43),
 				Options: map[string]dbus.Variant{},
 			},
 		}

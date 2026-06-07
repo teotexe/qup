@@ -7,9 +7,10 @@ echo "=== AURASHARE P2P STREAM VERIFICATION & AUTOMATED TESTING ==="
 
 # Cleanup old processes
 cleanup() {
-    echo "Cleaning up any running share, connect, or dbus processes..."
-    pkill -f "share" || true
-    pkill -f "connect" || true
+    echo "Cleaning up any running share, connect, or dbus processes safely..."
+    # Removed -f to stop pulling down Google Chrome and other processes
+    pkill -x "share" || true
+    pkill -x "connect" || true
     pkill -f "dbus-daemon --session" || true
     rm -f host_x11.log client_x11.log host_wayland.log client_wayland.log
 }
@@ -42,8 +43,9 @@ echo "Monitoring P2P run for 10 seconds..."
 sleep 10
 
 echo "Stopping processes..."
-pkill -f "share -port=50011" || true
-pkill -f "connect -test 127.0.0.1:50011" || true
+# Targeted kills using exact matching
+pkill -x "share" || true
+pkill -x "connect" || true
 
 echo "Analyzing X11 Test logs..."
 echo "--- Host X11 Log Snippet ---"
@@ -114,8 +116,8 @@ echo "Monitoring P2P Wayland run for 10 seconds..."
 sleep 10
 
 echo "Stopping processes..."
-pkill -f "share -port=50012" || true
-pkill -f "connect -test 127.0.0.1:50012" || true
+pkill -x "share" || true
+pkill -x "connect" || true
 pkill -f "dbus-daemon --session" || true
 
 echo "Analyzing Wayland Test logs..."

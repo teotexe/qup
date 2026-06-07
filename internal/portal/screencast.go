@@ -32,8 +32,8 @@ func (s *ScreenCastSession) Close() error {
 }
 
 // Handshake performs the CreateSession -> SelectSources -> Start -> OpenPipeWireRemote flow
-// and returns the PipeWire stream node ID and the PipeWire socket file descriptor.
-func (s *ScreenCastSession) Handshake(ctx context.Context) (uint32, int, error) {
+// and returns the PipeWire video stream node ID, audio stream node ID, and the PipeWire socket file descriptor.
+func (s *ScreenCastSession) Handshake(ctx context.Context) (uint32, uint32, int, error) {
 	// Generate unique tokens for requests and session
 	rand.Seed(time.Now().UnixNano())
 	tokenSuffix := fmt.Sprintf("%d", rand.Intn(1000000))
@@ -51,7 +51,7 @@ func (s *ScreenCastSession) Handshake(ctx context.Context) (uint32, int, error) 
 		dbus.WithMatchSender("org.freedesktop.portal.Desktop"),
 	)
 	if err != nil {
-		return 0, -1, fmt.Errorf("failed to add match signal: %w", err)
+		return 0, 0, -1, fmt.Errorf("failed to add match signal: %w", err)
 	}
 
 	signals := make(chan *dbus.Signal, 10)
@@ -89,20 +89,20 @@ func (s *ScreenCastSession) Handshake(ctx context.Context) (uint32, int, error) 
 	var createReqPath dbus.ObjectPath
 	err = bus.CallWithContext(ctx, "org.freedesktop.portal.ScreenCast.CreateSession", 0, createOpts).Store(&createReqPath)
 	if err != nil {
-		return 0, -1, fmt.Errorf("CreateSession call failed: %w", err)
+		return 0, 0, -1, fmt.Errorf("CreateSession call failed: %w", err)
 	}
 
 	respCode, results, err := waitResponse(createReqPath)
 	if err != nil {
-		return 0, -1, fmt.Errorf("error waiting for CreateSession response: %w", err)
+		return 0, 0, -1, fmt.Errorf("error waiting for CreateSession response: %w", err)
 	}
 	if respCode != 0 {
-		return 0, -1, fmt.Errorf("CreateSession was cancelled or failed with code %d", respCode)
+		return 0, 0, -1, fmt.Errorf("CreateSession was cancelled or failed with code %d", respCode)
 	}
 
 	sessionHandleStr, ok := results["session_handle"].Value().(string)
 	if !ok {
-		return 0, -1, fmt.Errorf("CreateSession did not return a valid session_handle")
+		return 0, 0, -1, fmt.Errorf("CreateSession did not return a valid session_handle")
 	}
 	sessionHandle := dbus.ObjectPath(sessionHandleStr)
 	log.Printf("[Portal] Session created successfully: %s", sessionHandle)
@@ -114,19 +114,20 @@ func (s *ScreenCastSession) Handshake(ctx context.Context) (uint32, int, error) 
 		"multiple":     dbus.MakeVariant(false),
 		"cursor_mode":  dbus.MakeVariant(uint32(2)),
 		"handle_token": dbus.MakeVariant(selectToken),
+		"audio":        dbus.MakeVariant(true), // Request application audio alongside video
 	}
 	var selectReqPath dbus.ObjectPath
 	err = bus.CallWithContext(ctx, "org.freedesktop.portal.ScreenCast.SelectSources", 0, sessionHandle, selectOpts).Store(&selectReqPath)
 	if err != nil {
-		return 0, -1, fmt.Errorf("SelectSources call failed: %w", err)
+		return 0, 0, -1, fmt.Errorf("SelectSources call failed: %w", err)
 	}
 
 	respCode, _, err = waitResponse(selectReqPath)
 	if err != nil {
-		return 0, -1, fmt.Errorf("error waiting for SelectSources response: %w", err)
+		return 0, 0, -1, fmt.Errorf("error waiting for SelectSources response: %w", err)
 	}
 	if respCode != 0 {
-		return 0, -1, fmt.Errorf("SelectSources was cancelled or failed with code %d", respCode)
+		return 0, 0, -1, fmt.Errorf("SelectSources was cancelled or failed with code %d", respCode)
 	}
 	log.Println("[Portal] Screen source selected successfully.")
 
@@ -138,20 +139,20 @@ func (s *ScreenCastSession) Handshake(ctx context.Context) (uint32, int, error) 
 	var startReqPath dbus.ObjectPath
 	err = bus.CallWithContext(ctx, "org.freedesktop.portal.ScreenCast.Start", 0, sessionHandle, "", startOpts).Store(&startReqPath)
 	if err != nil {
-		return 0, -1, fmt.Errorf("Start call failed: %w", err)
+		return 0, 0, -1, fmt.Errorf("Start call failed: %w", err)
 	}
 
 	respCode, results, err = waitResponse(startReqPath)
 	if err != nil {
-		return 0, -1, fmt.Errorf("error waiting for Start response: %w", err)
+		return 0, 0, -1, fmt.Errorf("error waiting for Start response: %w", err)
 	}
 	if respCode != 0 {
-		return 0, -1, fmt.Errorf("Start was cancelled or failed with code %d", respCode)
+		return 0, 0, -1, fmt.Errorf("Start was cancelled or failed with code %d", respCode)
 	}
 
 	streamsVal, ok := results["streams"]
 	if !ok {
-		return 0, -1, fmt.Errorf("Start response did not contain streams")
+		return 0, 0, -1, fmt.Errorf("Start response did not contain streams")
 	}
 
 	// The signature is a(ua{sv}) -> slice of structs containing (uint32, map[string]variant)
@@ -162,15 +163,35 @@ func (s *ScreenCastSession) Handshake(ctx context.Context) (uint32, int, error) 
 	}
 	err = dbus.Store([]interface{}{streamsVal.Value()}, &streams)
 	if err != nil {
-		return 0, -1, fmt.Errorf("failed to decode streams: %w", err)
+		return 0, 0, -1, fmt.Errorf("failed to decode streams: %w", err)
 	}
 
 	if len(streams) == 0 {
-		return 0, -1, fmt.Errorf("no screencast streams returned")
+		return 0, 0, -1, fmt.Errorf("no screencast streams returned")
 	}
 
-	nodeID := streams[0].NodeID
-	log.Printf("[Portal] ScreenCast session started. PipeWire Node ID: %d", nodeID)
+	var videoNodeID, audioNodeID uint32
+	if len(streams) == 1 {
+		videoNodeID = streams[0].NodeID
+		log.Printf("[Portal] ScreenCast session started with 1 stream. Video PipeWire Node ID: %d", videoNodeID)
+	} else {
+		// Differentiate video stream from audio stream using "source_type" in Options
+		for _, stream := range streams {
+			if _, ok := stream.Options["source_type"]; ok {
+				videoNodeID = stream.NodeID
+			} else {
+				audioNodeID = stream.NodeID
+			}
+		}
+		// Fallback: if we couldn't differentiate, assume first is video and second is audio
+		if videoNodeID == 0 {
+			videoNodeID = streams[0].NodeID
+			if len(streams) > 1 {
+				audioNodeID = streams[1].NodeID
+			}
+		}
+		log.Printf("[Portal] ScreenCast session started with multiple streams. Video Node ID: %d, Audio Node ID: %d", videoNodeID, audioNodeID)
+	}
 
 	// 4. Open PipeWire Remote
 	log.Println("[Portal] Opening PipeWire remote...")
@@ -178,11 +199,11 @@ func (s *ScreenCastSession) Handshake(ctx context.Context) (uint32, int, error) 
 	var fd dbus.UnixFD
 	err = bus.CallWithContext(ctx, "org.freedesktop.portal.ScreenCast.OpenPipeWireRemote", 0, sessionHandle, openOpts).Store(&fd)
 	if err != nil {
-		return 0, -1, fmt.Errorf("OpenPipeWireRemote call failed: %w", err)
+		return 0, 0, -1, fmt.Errorf("OpenPipeWireRemote call failed: %w", err)
 	}
 
 	log.Printf("[Portal] PipeWire remote opened. File Descriptor: %d", fd)
-	return nodeID, int(fd), nil
+	return videoNodeID, audioNodeID, int(fd), nil
 }
 
 // IsWayland returns true if the environment suggests we are running on Wayland.

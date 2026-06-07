@@ -149,14 +149,23 @@ func main() {
 
 	log.Printf("Launching ffplay rendering window...")
 
+	// Verify if the requested hwaccel is physically available
+	hwaccel := *hwaccelFlag
+	if hwaccel != "none" {
+		if !verifyHwaccel(hwaccel, *hwaccelDeviceFlag) {
+			log.Printf("[HW Accel] Warning: %s hardware acceleration is not physically available. Falling back to software decoding (none).", hwaccel)
+			hwaccel = "none"
+		}
+	}
+
 	// Build ffplay command
 	ffplayArgs := []string{
 		"-loglevel", *ffplayLogLevelFlag,
 	}
 
-	if *hwaccelFlag != "none" {
-		log.Printf("Enabling %s hardware-accelerated decoding (device: %s)", *hwaccelFlag, *hwaccelDeviceFlag)
-		ffplayArgs = append(ffplayArgs, "-hwaccel", *hwaccelFlag)
+	if hwaccel != "none" {
+		log.Printf("Enabling %s hardware-accelerated decoding (device: %s)", hwaccel, *hwaccelDeviceFlag)
+		ffplayArgs = append(ffplayArgs, "-hwaccel", hwaccel)
 
 		// CRITICAL FIX: Download the hardware frames to system memory before rendering.
 		// This forces ffplay to bypass the broken Vulkan pipeline and open the window.
@@ -199,7 +208,7 @@ func main() {
 
 	// CRITICAL FIX: Ensure environment variables correctly append to the current OS context
 	cmd.Env = os.Environ()
-	if *hwaccelFlag == "vaapi" {
+	if hwaccel == "vaapi" {
 		cmd.Env = append(cmd.Env,
 			"LIBVA_DRIVER_NAME=iHD",
 			fmt.Sprintf("LIBVA_DEVICE=%s", *hwaccelDeviceFlag),
@@ -237,4 +246,33 @@ func main() {
 	} else {
 		log.Printf("Streaming finished successfully.")
 	}
+}
+
+// verifyHwaccel checks if the specified hardware acceleration method is physically supported and working.
+func verifyHwaccel(method, device string) bool {
+	if method == "none" {
+		return true
+	}
+
+	// Build validation command: initialize the hardware device and run a 0.1s dummy testsrc encoding.
+	// Since ffmpeg will try to open and initialize the hardware device, this will fail if the device is not available.
+	var args []string
+	if method == "vaapi" {
+		args = []string{"-init_hw_device", fmt.Sprintf("vaapi=va:%s", device), "-f", "lavfi", "-i", "testsrc=duration=0.1", "-f", "null", "-"}
+	} else {
+		args = []string{"-init_hw_device", method, "-f", "lavfi", "-i", "testsrc=duration=0.1", "-f", "null", "-"}
+	}
+	cmd := exec.Command("ffmpeg", args...)
+
+	if method == "vaapi" {
+		cmd.Env = append(os.Environ(),
+			"LIBVA_DRIVER_NAME=iHD",
+			fmt.Sprintf("LIBVA_DEVICE=%s", device),
+		)
+	}
+
+	if err := cmd.Run(); err != nil {
+		return false
+	}
+	return true
 }

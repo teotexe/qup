@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -46,6 +47,7 @@ func main() {
 	debugFlag := flag.Bool("debug", false, "Enable verbose diagnostic logging for pipeline debugging")
 	headlessFlag := flag.Bool("headless", false, "Use synthetic GStreamer test source (no screen capture, no portal popup). Tests the full GStreamer→FFmpeg→QUIC pipeline.")
 	volumeFlag := flag.Float64("volume", 150.0, "Audio volume amplification factor (e.g. 150.0 for 150x volume boost)")
+	audioAppFlag := flag.String("audio-app", "", "Name of the app to capture audio from (e.g., 'Firefox'). If empty, falls back to system audio.")
 	flag.Parse()
 
 	display := *displayFlag
@@ -57,8 +59,8 @@ func main() {
 	}
 
 	log.Printf("Starting AuraShare Host (Bob) on port %d...", *portFlag)
-	log.Printf("Capture config: TestMode=%v, Headless=%v, Debug=%v, Display=%s, Size=%s, FPS=%d, Codec=%s, GOP=%d, Preset=%s, Tune=%s, Bitrate=%d, Volume=%.1f",
-		*testFlag, *headlessFlag, *debugFlag, display, *sizeFlag, *fpsFlag, *codecFlag, *gopFlag, *presetFlag, *tuneFlag, *bitrateFlag, *volumeFlag)
+	log.Printf("Capture config: TestMode=%v, Headless=%v, Debug=%v, Display=%s, Size=%s, FPS=%d, Codec=%s, GOP=%d, Preset=%s, Tune=%s, Bitrate=%d, Volume=%.1f, AudioApp=%s",
+		*testFlag, *headlessFlag, *debugFlag, display, *sizeFlag, *fpsFlag, *codecFlag, *gopFlag, *presetFlag, *tuneFlag, *bitrateFlag, *volumeFlag, *audioAppFlag)
 
 	// Create main context
 	ctx, cancel := context.WithCancel(context.Background())
@@ -113,7 +115,7 @@ func main() {
 		}
 
 		log.Printf("Peer connected from: %s", conn.RemoteAddr().String())
-		go handlePeer(ctx, conn, *testFlag, *headlessFlag, *debugFlag, display, *sizeFlag, *fpsFlag, *codecFlag, *gopFlag, *presetFlag, *tuneFlag, *bitrateFlag, *volumeFlag)
+		go handlePeer(ctx, conn, *testFlag, *headlessFlag, *debugFlag, display, *sizeFlag, *fpsFlag, *codecFlag, *gopFlag, *presetFlag, *tuneFlag, *bitrateFlag, *volumeFlag, *audioAppFlag)
 	}
 }
 
@@ -350,7 +352,7 @@ func getGstVolumeChain(volume float64) []string {
 	return args
 }
 
-func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, debugMode bool, display, size string, fps int, codec string, gop int, preset, tune string, bitrate int, volume float64) {
+func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, debugMode bool, display, size string, fps int, codec string, gop int, preset, tune string, bitrate int, volume float64, audioApp string) {
 	defer conn.CloseWithError(0, "connection closed")
 	log.Printf("Establishing outbound media stream...")
 
@@ -383,6 +385,7 @@ func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, de
 	log.Printf("Selected capture engine: %s", backendName)
 
 	var nodeID uint32
+	var audioNodeID uint32
 	var pwFD int = -1
 	var sess *portal.ScreenCastSession
 
@@ -395,12 +398,12 @@ func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, de
 			backend = BackendX11
 		} else {
 			defer sess.Close()
-			nodeID, pwFD, err = sess.Handshake(ctx)
+			nodeID, audioNodeID, pwFD, err = sess.Handshake(ctx)
 			if err != nil {
 				log.Printf("ScreenCast portal handshake failed: %v. Falling back to X11 grab...", err)
 				backend = BackendX11
 			} else {
-				log.Printf("ScreenCast portal handshake succeeded! PipeWire Node ID: %d, FD: %d", nodeID, pwFD)
+				log.Printf("ScreenCast portal handshake succeeded! PipeWire Node ID: %d, Audio Node ID: %d, FD: %d", nodeID, audioNodeID, pwFD)
 			}
 		}
 	}
@@ -429,6 +432,25 @@ func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, de
 	audioDevice := getDefaultPulseAudioMonitor()
 	log.Printf("[Audio] Dynamically selected PulseAudio monitor source: %s", audioDevice)
 
+	var virtualSinkModuleID string
+	if audioApp != "" {
+		cmdSink := exec.Command("pactl", "load-module", "module-null-sink", "sink_name=AuraShare_AppCapture", "sink_properties=device.description=\"AuraShare_AppCapture\"")
+		output, err := cmdSink.Output()
+		if err != nil {
+			log.Printf("[AudioApp] Failed to create virtual null sink: %v. Audio app capture might fail.", err)
+		} else {
+			virtualSinkModuleID = strings.TrimSpace(string(output))
+			log.Printf("[AudioApp] Successfully created virtual null sink. Module ID: %s", virtualSinkModuleID)
+			defer func() {
+				log.Printf("[AudioApp] Unloading virtual null sink module ID: %s", virtualSinkModuleID)
+				_ = exec.Command("pactl", "unload-module", virtualSinkModuleID).Run()
+			}()
+
+			// Start background watcher to link app audio to this sink
+			go linkAppAudioToSink(ctx, audioApp)
+		}
+	}
+
 	if testMode {
 		log.Println("Using synthetic test video source (lavfi testsrc)...")
 		ffmpegArgs := []string{
@@ -452,15 +474,37 @@ func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, de
 			"-thread_queue_size", "1024",
 			"-f", "lavfi",
 			"-i", fmt.Sprintf("pipewiregrab=fd=3:node=%d", nodeID),
-			"-thread_queue_size", "1024",
-			"-f", "pulse",
-			"-ac", "2",
-			"-ar", "48000",
-			"-i", audioDevice,
+		}
+
+		if audioApp != "" && virtualSinkModuleID != "" {
+			ffmpegArgs = append(ffmpegArgs,
+				"-thread_queue_size", "1024",
+				"-f", "pulse",
+				"-ac", "2",
+				"-ar", "48000",
+				"-i", "AuraShare_AppCapture.monitor",
+			)
+		} else if audioNodeID > 0 {
+			ffmpegArgs = append(ffmpegArgs,
+				"-thread_queue_size", "1024",
+				"-f", "lavfi",
+				"-i", fmt.Sprintf("pipewiregrab=fd=3:node=%d", audioNodeID),
+			)
+		} else {
+			ffmpegArgs = append(ffmpegArgs,
+				"-thread_queue_size", "1024",
+				"-f", "pulse",
+				"-ac", "2",
+				"-ar", "48000",
+				"-i", audioDevice,
+			)
+		}
+
+		ffmpegArgs = append(ffmpegArgs,
 			"-map", "0:v",
 			"-map", "1:a",
 			"-c:v", codec,
-		}
+		)
 		scalePadFilter := fmt.Sprintf("scale=w=%d:h=%d:force_original_aspect_ratio=decrease,pad=w=%d:h=%d:x=(ow-iw)/2:y=(oh-ih)/2:color=black", width, height, width, height)
 		videoArgs := prependVideoFilter(extraCodecArgs, scalePadFilter)
 		videoArgs = appendVideoFilter(videoArgs, "setpts=PTS-STARTPTS")
@@ -557,10 +601,24 @@ func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, de
 				"!", "mux.",
 			)
 		} else {
-			audioArgs = []string{
-				"pulsesrc", fmt.Sprintf("device=%s", audioDevice),
-				"!", "queue", "max-size-buffers=10", "leaky=downstream",
-				"!", "audio/x-raw,rate=48000,channels=2",
+			if audioApp != "" && virtualSinkModuleID != "" {
+				audioArgs = []string{
+					"pulsesrc", "device=AuraShare_AppCapture.monitor",
+					"!", "queue", "max-size-buffers=10", "leaky=downstream",
+					"!", "audio/x-raw,rate=48000,channels=2",
+				}
+			} else if audioNodeID > 0 {
+				audioArgs = []string{
+					"pipewiresrc", fmt.Sprintf("path=%d", audioNodeID), "fd=3", "do-timestamp=true", "keepalive-time=100",
+					"!", "queue", "max-size-buffers=10", "leaky=downstream",
+					"!", "audio/x-raw,rate=48000,channels=2",
+				}
+			} else {
+				audioArgs = []string{
+					"pulsesrc", fmt.Sprintf("device=%s", audioDevice),
+					"!", "queue", "max-size-buffers=10", "leaky=downstream",
+					"!", "audio/x-raw,rate=48000,channels=2",
+				}
 			}
 			audioArgs = append(audioArgs, getGstVolumeChain(volume)...)
 			audioArgs = append(audioArgs,
@@ -741,4 +799,209 @@ func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, de
 	} else {
 		log.Printf("Streaming finished successfully.")
 	}
+}
+
+// getAppAudioPorts parses pw-dump JSON to find the output ports of the specified app.
+func getAppAudioPorts(appName string) ([]string, error) {
+	cmd := exec.Command("pw-dump")
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("failed to run pw-dump: %w", err)
+	}
+
+	var objects []struct {
+		ID   uint32 `json:"id"`
+		Type string `json:"type"`
+		Info *struct {
+			Props map[string]interface{} `json:"props"`
+		} `json:"info"`
+	}
+
+	if err := json.Unmarshal(output, &objects); err != nil {
+		return nil, fmt.Errorf("failed to parse pw-dump JSON: %w", err)
+	}
+
+	appNameLower := strings.ToLower(appName)
+	var appNodeID uint32
+	foundNode := false
+
+	// Step 1: Find the Node ID of the application
+	for _, obj := range objects {
+		if obj.Type != "PipeWire:Interface:Node" {
+			continue
+		}
+		if obj.Info == nil || obj.Info.Props == nil {
+			continue
+		}
+		props := obj.Info.Props
+
+		// Verify media class is "Stream/Output/Audio"
+		mediaClassVal, ok := props["media.class"]
+		if !ok {
+			continue
+		}
+		mediaClass, ok := mediaClassVal.(string)
+		if !ok || mediaClass != "Stream/Output/Audio" {
+			continue
+		}
+
+		// Check application name or application process binary
+		match := false
+		if appNameVal, ok := props["application.name"]; ok {
+			if appNameStr, ok := appNameVal.(string); ok {
+				appNameStrLower := strings.ToLower(appNameStr)
+				if appNameStrLower == appNameLower || strings.Contains(appNameStrLower, appNameLower) {
+					match = true
+				}
+			}
+		}
+		if !match {
+			if binaryVal, ok := props["application.process.binary"]; ok {
+				if binaryStr, ok := binaryVal.(string); ok {
+					binaryStrLower := strings.ToLower(binaryStr)
+					if binaryStrLower == appNameLower || strings.Contains(binaryStrLower, appNameLower) {
+						match = true
+					}
+				}
+			}
+		}
+
+		if match {
+			appNodeID = obj.ID
+			foundNode = true
+			log.Printf("[AudioApp] Found app '%s' Node ID: %d", appName, appNodeID)
+			break
+		}
+	}
+
+	if !foundNode {
+		return nil, fmt.Errorf("could not find audio node for application: %s", appName)
+	}
+
+	// Step 2: Find all output Port IDs for this Node ID
+	var portIDs []string
+	for _, obj := range objects {
+		if obj.Type != "PipeWire:Interface:Port" {
+			continue
+		}
+		if obj.Info == nil || obj.Info.Props == nil {
+			continue
+		}
+		props := obj.Info.Props
+
+		// Match port's node.id
+		nodeIDVal, ok := props["node.id"]
+		if !ok {
+			continue
+		}
+
+		// node.id can be float64 or int or uint32
+		var portNodeID uint32
+		switch v := nodeIDVal.(type) {
+		case float64:
+			portNodeID = uint32(v)
+		case int:
+			portNodeID = uint32(v)
+		case uint32:
+			portNodeID = v
+		default:
+			continue
+		}
+
+		if portNodeID != appNodeID {
+			continue
+		}
+
+		// Verify port direction is "out"
+		portDirVal, ok := props["port.direction"]
+		if !ok {
+			continue
+		}
+		portDir, ok := portDirVal.(string)
+		if !ok || portDir != "out" {
+			continue
+		}
+
+		// Add this port ID
+		portIDs = append(portIDs, fmt.Sprintf("%d", obj.ID))
+	}
+
+	if len(portIDs) == 0 {
+		return nil, fmt.Errorf("no output ports found for application node: %d", appNodeID)
+	}
+
+	log.Printf("[AudioApp] Found %d output ports for app '%s': %v", len(portIDs), appName, portIDs)
+	return portIDs, nil
+}
+
+// linkAppAudioToSink runs in a background goroutine, monitoring the app's ports
+// and linking them to the virtual null sink whenever they appear.
+func linkAppAudioToSink(ctx context.Context, appName string) {
+	log.Printf("[Watcher] Starting audio link watcher for application '%s'...", appName)
+	linked := false
+	var activePorts []string
+
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			log.Printf("[Watcher] Stopping watcher for '%s' (context cancelled)", appName)
+			return
+		case <-ticker.C:
+			ports, err := getAppAudioPorts(appName)
+			if err != nil {
+				// App is closed or muted/inactive, reset linked state
+				if linked {
+					log.Printf("[Watcher] Application '%s' audio ports disappeared. Resetting link state.", appName)
+					linked = false
+					activePorts = nil
+				}
+				continue
+			}
+
+			// If already linked with exact same ports, check if the ports changed. If not, do nothing.
+			if linked && equalSlices(ports, activePorts) {
+				continue
+			}
+
+			// Perform link
+			log.Printf("[Watcher] Application '%s' audio ports discovered: %v. Linking to AuraShare_AppCapture...", appName, ports)
+			
+			// Map first port to Left (playback_FL) and second port to Right (playback_FR)
+			targets := []string{"AuraShare_AppCapture:playback_FL", "AuraShare_AppCapture:playback_FR"}
+			
+			for i, port := range ports {
+				target := targets[0] // Fallback to Left if more than 2 ports
+				if i < len(targets) {
+					target = targets[i]
+				}
+
+				// Execute pw-link
+				cmdLink := exec.Command("pw-link", port, target)
+				if err := cmdLink.Run(); err != nil {
+					log.Printf("[Watcher] Failed to link port %s to %s: %v", port, target, err)
+				} else {
+					log.Printf("[Watcher] Successfully linked port %s -> %s", port, target)
+				}
+			}
+
+			linked = true
+			activePorts = ports
+		}
+	}
+}
+
+// equalSlices checks if two string slices are equal.
+func equalSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
