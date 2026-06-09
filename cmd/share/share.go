@@ -42,7 +42,7 @@ func main() {
 	presetFlag := flag.String("preset", "ultrafast", "x264 encoder preset (e.g., ultrafast, superfast, veryfast, medium)")
 	tuneFlag := flag.String("tune", "zerolatency", "x264 encoder tune option")
 	gopFlag := flag.Int("g", 30, "GOP (keyframe interval) size. Default is 30 for low-latency fast startup connection.")
-	codecFlag := flag.String("codec", "libx264", "H.264 encoder library. Auto-probes hardware acceleration (NVENC, VA-API) by default.")
+	codecFlag := flag.String("codec", "auto", "GStreamer H.264 encoder element (e.g., x264enc, vah264enc, nvh264enc). Defaults to 'auto' for hardware autoprobing.")
 	bitrateFlag := flag.Int("bitrate", 8000, "Target video bitrate in kbps (e.g., 8000 for 8 Mbps high-quality 1080p)")
 	testFlag := flag.Bool("test", false, "Use a synthetic test video source (lavfi testsrc) instead of X11 capture")
 	mockPortalFlag := flag.Bool("mock-portal", false, "Start a mock D-Bus ScreenCast portal in the background (for testing)")
@@ -157,9 +157,12 @@ func getCaptureBackend(isWayland, testMode bool) (CaptureBackend, string) {
 
 // selectBestH264Encoder selects the best available H.264 encoder element for GStreamer.
 func selectBestH264Encoder(codec, preset, tune string, gop int, bitrate int) (string, []string) {
-	// If the user requested a specific GStreamer encoder, respect it
-	if codec == "vah264enc" || codec == "nvh264enc" || codec == "x264enc" {
-		return codec, getGstEncoderArgs(codec, preset, tune, gop, bitrate)
+	if codec != "auto" {
+		if supportsGstElement(codec) {
+			log.Printf("[Codec] Respecting user-specified GStreamer encoder element: '%s'", codec)
+			return codec, getGstEncoderArgs(codec, preset, tune, gop, bitrate)
+		}
+		log.Printf("[Codec] Warning: Requested GStreamer encoder element '%s' is not supported on this system. Falling back to autoprobing...", codec)
 	}
 
 	// 1. Check for VA-API (Intel/AMD hardware acceleration)
@@ -209,6 +212,12 @@ func getGstEncoderArgs(encoder, preset, tune string, gop int, bitrate int) []str
 			"bframes=0",
 			fmt.Sprintf("tune=%s", gstTune),
 			fmt.Sprintf("speed-preset=%s", gstPreset),
+			fmt.Sprintf("bitrate=%d", bitrate),
+		}
+	case "qsvh264enc", "msdkh264enc":
+		return []string{
+			fmt.Sprintf("gop-size=%d", gop),
+			"bframes=0",
 			fmt.Sprintf("bitrate=%d", bitrate),
 		}
 	default:
