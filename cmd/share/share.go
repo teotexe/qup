@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -17,10 +18,11 @@ import (
 	"time"
 
 	"aurashare/internal/crypto"
-	"aurashare/internal/portal"
 	"aurashare/internal/stats"
 
 	"github.com/quic-go/quic-go"
+	portal "github.com/teotexe/wayland-portal-go"
+	"github.com/teotexe/wayland-portal-go/pwrouter"
 )
 
 type CaptureBackend int
@@ -33,7 +35,7 @@ const (
 func main() {
 	os.Setenv("PULSE_LATENCY_MSEC", "30")
 	// Parse CLI flags
-	portFlag := flag.Int("port", 50001, "Port to listen on")
+	portFlag := flag.Int("port", 22050, "Port to listen on")
 	displayFlag := flag.String("display", "", "X11 display to grab (e.g. :0.0). Defaults to $DISPLAY env var.")
 	sizeFlag := flag.String("size", "1920x1080", "Video capture dimensions (width x height)")
 	fpsFlag := flag.Int("fps", 60, "Frame rate for capturing")
@@ -78,7 +80,7 @@ func main() {
 	// Start Mock D-Bus Portal if requested or configured
 	if *mockPortalFlag || os.Getenv("AURASHARE_MOCK_PORTAL") == "1" {
 		log.Println("Starting Mock D-Bus ScreenCast Portal...")
-		err := portal.StartMockPortal(ctx)
+		_, err := portal.StartMockPortal(ctx)
 		if err != nil {
 			log.Fatalf("Failed to start mock portal: %v", err)
 		}
@@ -273,17 +275,29 @@ func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, de
 	// If a Wayland backend is chosen AND we're not headless, trigger the portal screen-sharing selection UI
 	if !headlessMode && backend == BackendWaylandGStreamer {
 		log.Println("Initializing D-Bus ScreenCast portal...")
-		sess, err = portal.NewScreenCastSession()
+		sess, err = portal.NewScreenCastSession("aurashare")
 		if err != nil {
 			log.Printf("Failed to initialize ScreenCast session: %v. Falling back to X11 grab...", err)
 			backend = BackendX11GStreamer
 		} else {
 			defer sess.Close()
-			nodeID, audioNodeID, pwFD, err = sess.Handshake(ctx)
+			opts := portal.ScreenCastOptions{
+				SourceTypes: portal.SourceMonitor | portal.SourceWindow,
+				CursorMode:  portal.CursorEmbedded,
+				Audio:       true,
+			}
+			info, err := sess.Handshake(ctx, opts)
 			if err != nil {
+				if errors.Is(err, portal.ErrUserCancelled) {
+					log.Println("User cancelled the screen share prompt. Exiting.")
+					os.Exit(0)
+				}
 				log.Printf("ScreenCast portal handshake failed: %v. Falling back to X11 grab...", err)
 				backend = BackendX11GStreamer
 			} else {
+				nodeID = info.VideoNodeID
+				audioNodeID = info.AudioNodeID
+				pwFD = info.PipeWireFD
 				log.Printf("ScreenCast portal handshake succeeded! PipeWire Node ID: %d, Audio Node ID: %d, FD: %d", nodeID, audioNodeID, pwFD)
 			}
 		}
@@ -304,24 +318,17 @@ func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, de
 	audioDevice := getDefaultPulseAudioMonitor()
 	log.Printf("[Audio] Dynamically selected PulseAudio monitor source: %s", audioDevice)
 
-	var virtualSinkModuleID string
+	var router *pwrouter.Router
 	if audioApp != "" {
-		cleanupStaleNullSinks()
-		cmdSink := exec.Command("pactl", "load-module", "module-null-sink", "sink_name=AuraShare_AppCapture", "sink_properties=device.description=\"AuraShare_AppCapture\"")
-		output, err := cmdSink.Output()
-		if err != nil {
-			log.Printf("[AudioApp] Failed to create virtual null sink: %v. Audio app capture might fail.", err)
-		} else {
-			virtualSinkModuleID = strings.TrimSpace(string(output))
-			log.Printf("[AudioApp] Successfully created virtual null sink. Module ID: %s", virtualSinkModuleID)
-			defer func() {
-				log.Printf("[AudioApp] Unloading virtual null sink module ID: %s", virtualSinkModuleID)
-				_ = exec.Command("pactl", "unload-module", virtualSinkModuleID).Run()
-			}()
-
-			// Start background watcher to link app audio to this sink
-			go linkAppAudioToSink(ctx, audioApp)
+		var errRouter error
+		router, errRouter = pwrouter.NewRouter("AuraShareAudioSink")
+		if errRouter != nil {
+			log.Fatalf("Failed to initialize audio router: %v", errRouter)
 		}
+		defer router.Close()
+
+		// Run the automatic monitoring loop in the background
+		go router.WatchAndLink(ctx, audioApp)
 	}
 
 	log.Printf("Building GStreamer pipeline...")
@@ -348,7 +355,7 @@ func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, de
 		videoArgs = []string{
 			"videotestsrc", "is-live=true",
 			"!", fmt.Sprintf("video/x-raw,format=I420,width=%d,height=%d,framerate=%d/1", width, height, fps),
-			"!", "videoconvert",
+			"!", "videoconvert", "n-threads=4",
 			"!", formatCaps,
 			"!", gstEncoder,
 		}
@@ -356,7 +363,7 @@ func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, de
 		videoArgs = append(videoArgs,
 			"!", "h264parse", "config-interval=-1",
 			"!", "video/x-h264,stream-format=byte-stream,alignment=au",
-			"!", "queue", "max-size-buffers=3", "leaky=downstream",
+			"!", "queue",
 			"!", "mux.",
 		)
 	} else if backend == BackendWaylandGStreamer {
@@ -366,41 +373,64 @@ func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, de
 		pwFile := os.NewFile(uintptr(pwFD), "pipewire-fd")
 		extraFiles = append(extraFiles, pwFile)
 
+		var convElements []string
+		if gstEncoder == "vah264enc" && supportsGstElement("vapostproc") {
+			convElements = []string{"!", "vapostproc"}
+		} else {
+			convElements = []string{
+				"!", "videoconvert", "n-threads=4",
+				"!", "videoscale", "n-threads=4",
+			}
+		}
+
 		videoArgs = []string{
 			"pipewiresrc", fmt.Sprintf("path=%d", nodeID), "fd=3", "do-timestamp=true", "keepalive-time=100",
 			"!", "queue", "max-size-buffers=3", "leaky=downstream",
-			"!", "videoconvert",
-			"!", "videoscale",
+		}
+		videoArgs = append(videoArgs, convElements...)
+		videoArgs = append(videoArgs,
 			"!", fmt.Sprintf("%s,width=%d,height=%d", formatCaps, width, height),
 			"!", "videorate",
 			"!", fmt.Sprintf("video/x-raw,framerate=%d/1", fps),
 			"!", gstEncoder,
-		}
+		)
 		videoArgs = append(videoArgs, gstEncoderArgs...)
 		videoArgs = append(videoArgs,
 			"!", "h264parse", "config-interval=-1",
 			"!", "video/x-h264,stream-format=byte-stream,alignment=au",
-			"!", "queue", "max-size-buffers=3", "leaky=downstream",
+			"!", "queue",
 			"!", "mux.",
 		)
 	} else {
 		// BackendX11GStreamer
 		log.Printf("X11 capture: Display=%s", display)
+
+		var convElements []string
+		if gstEncoder == "vah264enc" && supportsGstElement("vapostproc") {
+			convElements = []string{"!", "vapostproc"}
+		} else {
+			convElements = []string{
+				"!", "videoconvert", "n-threads=4",
+				"!", "videoscale", "n-threads=4",
+			}
+		}
+
 		videoArgs = []string{
 			"ximagesrc", fmt.Sprintf("display-name=%s", display), "show-pointer=true", "use-damage=false",
 			"!", "queue", "max-size-buffers=3", "leaky=downstream",
-			"!", "videoconvert",
-			"!", "videoscale",
+		}
+		videoArgs = append(videoArgs, convElements...)
+		videoArgs = append(videoArgs,
 			"!", fmt.Sprintf("%s,width=%d,height=%d", formatCaps, width, height),
 			"!", "videorate",
 			"!", fmt.Sprintf("video/x-raw,framerate=%d/1", fps),
 			"!", gstEncoder,
-		}
+		)
 		videoArgs = append(videoArgs, gstEncoderArgs...)
 		videoArgs = append(videoArgs,
 			"!", "h264parse", "config-interval=-1",
 			"!", "video/x-h264,stream-format=byte-stream,alignment=au",
-			"!", "queue", "max-size-buffers=3", "leaky=downstream",
+			"!", "queue",
 			"!", "mux.",
 		)
 	}
@@ -414,26 +444,26 @@ func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, de
 		audioArgs = append(audioArgs,
 			"!", "audioconvert",
 			"!", "opusenc", "bitrate=96000",
-			"!", "queue", "max-size-buffers=10", "leaky=downstream",
+			"!", "queue",
 			"!", "mux.",
 		)
 	} else {
-		if audioApp != "" && virtualSinkModuleID != "" {
+		if audioApp != "" && router != nil {
 			audioArgs = []string{
-				"pulsesrc", "device=AuraShare_AppCapture.monitor",
-				"!", "queue", "max-size-buffers=10", "leaky=downstream",
+				"pulsesrc", "device=AuraShareAudioSink.monitor",
+				"!", "queue",
 				"!", "audio/x-raw,rate=48000,channels=2",
 			}
 		} else if audioNodeID > 0 {
 			audioArgs = []string{
 				"pipewiresrc", fmt.Sprintf("path=%d", audioNodeID), "fd=3", "do-timestamp=true", "keepalive-time=100",
-				"!", "queue", "max-size-buffers=10", "leaky=downstream",
+				"!", "queue",
 				"!", "audio/x-raw,rate=48000,channels=2",
 			}
 		} else {
 			audioArgs = []string{
 				"pulsesrc", fmt.Sprintf("device=%s", audioDevice),
-				"!", "queue", "max-size-buffers=10", "leaky=downstream",
+				"!", "queue",
 				"!", "audio/x-raw,rate=48000,channels=2",
 			}
 		}
@@ -441,7 +471,7 @@ func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, de
 		audioArgs = append(audioArgs,
 			"!", "audioconvert",
 			"!", "opusenc", "bitrate=96000",
-			"!", "queue", "max-size-buffers=10", "leaky=downstream",
+			"!", "queue",
 			"!", "mux.",
 		)
 	}
@@ -519,215 +549,6 @@ func handlePeer(ctx context.Context, conn *quic.Conn, testMode, headlessMode, de
 	} else {
 		log.Printf("Streaming finished successfully.")
 	}
-}
-
-// getAppAudioPorts parses pw-dump JSON to find the output ports of the specified app.
-func getAppAudioPorts(appName string) ([]string, error) {
-	cmd := exec.Command("pw-dump")
-	output, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("failed to run pw-dump: %w", err)
-	}
-
-	var objects []struct {
-		ID   uint32 `json:"id"`
-		Type string `json:"type"`
-		Info *struct {
-			Props map[string]interface{} `json:"props"`
-		} `json:"info"`
-	}
-
-	if err := json.Unmarshal(output, &objects); err != nil {
-		return nil, fmt.Errorf("failed to parse pw-dump JSON: %w", err)
-	}
-
-	appNameLower := strings.ToLower(appName)
-	var appNodeID uint32
-	foundNode := false
-
-	// Step 1: Find the Node ID of the application
-	for _, obj := range objects {
-		if obj.Type != "PipeWire:Interface:Node" {
-			continue
-		}
-		if obj.Info == nil || obj.Info.Props == nil {
-			continue
-		}
-		props := obj.Info.Props
-
-		// Verify media class is "Stream/Output/Audio"
-		mediaClassVal, ok := props["media.class"]
-		if !ok {
-			continue
-		}
-		mediaClass, ok := mediaClassVal.(string)
-		if !ok || mediaClass != "Stream/Output/Audio" {
-			continue
-		}
-
-		// Check application name or application process binary
-		match := false
-		if appNameVal, ok := props["application.name"]; ok {
-			if appNameStr, ok := appNameVal.(string); ok {
-				appNameStrLower := strings.ToLower(appNameStr)
-				if appNameStrLower == appNameLower || strings.Contains(appNameStrLower, appNameLower) {
-					match = true
-				}
-			}
-		}
-		if !match {
-			if binaryVal, ok := props["application.process.binary"]; ok {
-				if binaryStr, ok := binaryVal.(string); ok {
-					binaryStrLower := strings.ToLower(binaryStr)
-					if binaryStrLower == appNameLower || strings.Contains(binaryStrLower, appNameLower) {
-						match = true
-					}
-				}
-			}
-		}
-
-		if match {
-			appNodeID = obj.ID
-			foundNode = true
-			// log.Printf("[AudioApp] Found app '%s' Node ID: %d", appName, appNodeID)
-			break
-		}
-	}
-
-	if !foundNode {
-		return nil, fmt.Errorf("could not find audio node for application: %s", appName)
-	}
-
-	// Step 2: Find all output Port IDs for this Node ID
-	var portIDs []string
-	for _, obj := range objects {
-		if obj.Type != "PipeWire:Interface:Port" {
-			continue
-		}
-		if obj.Info == nil || obj.Info.Props == nil {
-			continue
-		}
-		props := obj.Info.Props
-
-		// Match port's node.id
-		nodeIDVal, ok := props["node.id"]
-		if !ok {
-			continue
-		}
-
-		// node.id can be float64 or int or uint32
-		var portNodeID uint32
-		switch v := nodeIDVal.(type) {
-		case float64:
-			portNodeID = uint32(v)
-		case int:
-			portNodeID = uint32(v)
-		case uint32:
-			portNodeID = v
-		default:
-			continue
-		}
-
-		if portNodeID != appNodeID {
-			continue
-		}
-
-		// Verify port direction is "out"
-		portDirVal, ok := props["port.direction"]
-		if !ok {
-			continue
-		}
-		portDir, ok := portDirVal.(string)
-		if !ok || portDir != "out" {
-			continue
-		}
-
-		// Add this port ID
-		portIDs = append(portIDs, fmt.Sprintf("%d", obj.ID))
-	}
-
-	if len(portIDs) == 0 {
-		return nil, fmt.Errorf("no output ports found for application node: %d", appNodeID)
-	}
-
-	// log.Printf("[AudioApp] Found %d output ports for app '%s': %v", len(portIDs), appName, portIDs)
-	return portIDs, nil
-}
-
-// linkAppAudioToSink runs in a background goroutine, monitoring the app's ports
-// and linking them to the virtual null sink whenever they appear.
-func linkAppAudioToSink(ctx context.Context, appName string) {
-	log.Printf("[Watcher] Starting audio link watcher for application '%s'...", appName)
-	linked := false
-	var activePorts []string
-
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			log.Printf("[Watcher] Stopping watcher for '%s' (context cancelled)", appName)
-			return
-		case <-ticker.C:
-			ports, err := getAppAudioPorts(appName)
-			if err != nil {
-				// App is closed or muted/inactive, reset linked state
-				if linked {
-					log.Printf("[Watcher] Application '%s' audio ports disappeared. Resetting link state.", appName)
-					linked = false
-					activePorts = nil
-				}
-				continue
-			}
-
-			// If already linked with exact same ports, check if the ports changed. If not, do nothing.
-			if linked && equalSlices(ports, activePorts) {
-				continue
-			}
-
-			// Perform link
-			log.Printf("[Watcher] Application '%s' audio ports discovered: %v. Linking to AuraShare_AppCapture...", appName, ports)
-
-			// Discover the virtual sink's playback ports dynamically
-			targets, err := getSinkPlaybackPorts("AuraShare_AppCapture")
-			if err != nil {
-				log.Printf("[Watcher] Failed to find playback ports for AuraShare_AppCapture: %v. Retrying in next cycle...", err)
-				continue
-			}
-
-			for i, port := range ports {
-				target := targets[0] // Fallback to Left if more than 2 ports
-				if i < len(targets) {
-					target = targets[i]
-				}
-
-				// Execute pw-link
-				cmdLink := exec.Command("pw-link", port, target)
-				if err := cmdLink.Run(); err != nil {
-					log.Printf("[Watcher] Failed to link port %s to %s: %v", port, target, err)
-				} else {
-					log.Printf("[Watcher] Successfully linked port %s -> %s", port, target)
-				}
-			}
-
-			linked = true
-			activePorts = ports
-		}
-	}
-}
-
-// equalSlices checks if two string slices are equal.
-func equalSlices(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 func isTerminal(f *os.File) bool {
@@ -855,161 +676,4 @@ func promptForAudioApp() string {
 			fmt.Printf("Invalid choice. Please choose between 0 and %d.\n", manualIdx)
 		}
 	}
-}
-
-// cleanupStaleNullSinks unloads any existing AuraShare_AppCapture virtual null sinks.
-func cleanupStaleNullSinks() {
-	cmd := exec.Command("pactl", "list", "short", "modules")
-	output, err := cmd.Output()
-	if err != nil {
-		return
-	}
-
-	scanner := bufio.NewScanner(strings.NewReader(string(output)))
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.Contains(line, "module-null-sink") && strings.Contains(line, "sink_name=AuraShare_AppCapture") {
-			fields := strings.Fields(line)
-			if len(fields) > 0 {
-				moduleID := fields[0]
-				log.Printf("[AudioApp] Unloading stale virtual null sink module ID: %s", moduleID)
-				_ = exec.Command("pactl", "unload-module", moduleID).Run()
-			}
-		}
-	}
-}
-
-// getSinkPlaybackPorts queries pw-dump for the input (playback) port IDs of the given sink.
-func getSinkPlaybackPorts(sinkName string) ([]string, error) {
-	cmd := exec.Command("pw-dump")
-	output, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("failed to run pw-dump: %w", err)
-	}
-
-	var objects []struct {
-		ID   uint32 `json:"id"`
-		Type string `json:"type"`
-		Info *struct {
-			Props map[string]interface{} `json:"props"`
-		} `json:"info"`
-	}
-
-	if err := json.Unmarshal(output, &objects); err != nil {
-		return nil, fmt.Errorf("failed to parse pw-dump JSON: %w", err)
-	}
-
-	// 1. Find Node ID for the sink
-	var sinkNodeID uint32
-	foundNode := false
-	sinkNameLower := strings.ToLower(sinkName)
-
-	for _, obj := range objects {
-		if obj.Type != "PipeWire:Interface:Node" {
-			continue
-		}
-		if obj.Info == nil || obj.Info.Props == nil {
-			continue
-		}
-		props := obj.Info.Props
-
-		mediaClassVal, ok := props["media.class"]
-		if !ok {
-			continue
-		}
-		mediaClass, ok := mediaClassVal.(string)
-		if !ok || mediaClass != "Audio/Sink" {
-			continue
-		}
-
-		if nodeNameVal, ok := props["node.name"]; ok {
-			if nodeNameStr, ok := nodeNameVal.(string); ok {
-				if strings.ToLower(nodeNameStr) == sinkNameLower {
-					sinkNodeID = obj.ID
-					foundNode = true
-					break
-				}
-			}
-		}
-	}
-
-	if !foundNode {
-		return nil, fmt.Errorf("could not find sink node: %s", sinkName)
-	}
-
-	// 2. Find all input (playback) Port IDs for this Node ID
-	var portIDs []string
-	var playbackFL, playbackFR string
-
-	for _, obj := range objects {
-		if obj.Type != "PipeWire:Interface:Port" {
-			continue
-		}
-		if obj.Info == nil || obj.Info.Props == nil {
-			continue
-		}
-		props := obj.Info.Props
-
-		nodeIDVal, ok := props["node.id"]
-		if !ok {
-			continue
-		}
-
-		var portNodeID uint32
-		switch v := nodeIDVal.(type) {
-		case float64:
-			portNodeID = uint32(v)
-		case int:
-			portNodeID = uint32(v)
-		case uint32:
-			portNodeID = v
-		default:
-			continue
-		}
-
-		if portNodeID != sinkNodeID {
-			continue
-		}
-
-		portDirVal, ok := props["port.direction"]
-		if !ok {
-			continue
-		}
-		portDir, ok := portDirVal.(string)
-		if !ok || portDir != "in" {
-			continue
-		}
-
-		portNameVal, ok := props["port.name"]
-		if !ok {
-			continue
-		}
-		portName, ok := portNameVal.(string)
-		if !ok {
-			continue
-		}
-
-		if portName == "playback_FL" {
-			playbackFL = fmt.Sprintf("%d", obj.ID)
-		} else if portName == "playback_FR" {
-			playbackFR = fmt.Sprintf("%d", obj.ID)
-		} else {
-			portIDs = append(portIDs, fmt.Sprintf("%d", obj.ID))
-		}
-	}
-
-	var result []string
-	if playbackFL != "" {
-		result = append(result, playbackFL)
-	}
-	if playbackFR != "" {
-		result = append(result, playbackFR)
-	}
-	result = append(result, portIDs...)
-
-	if len(result) == 0 {
-		return nil, fmt.Errorf("no playback ports found for sink node: %d", sinkNodeID)
-	}
-
-	return result, nil
 }
