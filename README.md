@@ -8,14 +8,17 @@ A human-written design file was provided with the main architecture and goals of
 The app requires the sharing peer to open a port on their router, 
 the connecting peer just streams the video over UDP.
 
-It started as an experimental project to explore decentralized networking, DHT protocols, and P2P discovery.
-The initial goal was to have 2 peers exchange a perpetual InfoHash (just like a phone number), and then have 2 daemons
-running in parallel that both announced and searched over the Bittorrent DHT for the other peer's Infohash. 
-After finding each other's public IP address the 2 would have established a P2P connection via 
-UDP hole punching but since most ISPs nowadays provide Symmetric NAT connections and other strict conditions 
-like MAP-e, traversing was practically unreliable.
+It started as an experimental project to explore decentralized networking, 
+DHT protocols, and P2P discovery. The initial goal was to have 2 peers 
+exchange a perpetual InfoHash (just like a phone number), and then have 2 daemons
+running in parallel that both announced and searched over the Bittorrent DHT for 
+the other peer's Infohash. After finding each other's public IP address the 2 would 
+have established a P2P connection via UDP hole punching but since most ISPs nowadays 
+provide Symmetric NAT connections and other strict conditions like MAP-e, 
+traversing was practically unreliable.
 
-IPv6 would have been an alternative but adoption is still low, especially in Italy ([around ~21%](https://www.aelius.com/njh/google-ipv6/it.html)), 
+IPv6 would have been an alternative but adoption is still low, 
+especially in Italy ([around ~21%](https://www.aelius.com/njh/google-ipv6/it.html)), 
 and the unpredictability of relay servers or STUN/TURN overhead would have been against the initial goal. 
 
 So the solution was just to rely on a direct IPv4 connection with minimal manual configuration.
@@ -23,10 +26,13 @@ So the solution was just to rely on a direct IPv4 connection with minimal manual
 It ended up being a super efficient way to share a screen/window.
 
 ## Performance
-Tested on
+Tested over network, host on 1gb connection, client on 20mb connection, 
+with no streaming issues, no lag, no artifacts.
+
 |  |  |
 | --- | --- |
 | **CPU** | Intel Core Ultra 7 258V |
+| **GPU** | Intel ARC 140V |
 | **RAM** | 32GB |
 | **OS** | Fedora |
 | **Throughput** | 1080p60 |
@@ -34,13 +40,14 @@ Tested on
 |  | Aurashare | Commercial (Zoom/Teams/Discord) |
 | --- | --- | --- |
 | **Transport** | **QUIC (via UDP)** | HTTPS/WebRTC (ICE/STUN/TURN) |
-| **CPU (Host)** | **5% – 10%** | 10% – 50%+ | 
+| **CPU (Host)** | **2% – 5%** | 10% – 50%+ | 
 | **RAM (Host)** | **~30MB** | 200MB – 1GB+ | 
 | **CPU (Viewer)** |  **~3%** | 15–30% (browser/app overhead) |
 | **RAM (Viewer)** |  **~120MB** | 300–800+ MB |
 | **Setup** | Manual (Port Forwarding) | Automated (STUN/TURN Servers) |
 | **NAT Traversal** | None (Direct IP) | High (handles restrictive firewalls) |
 
+Tested locally up to 4k 60fps with no issues.
 
 ---
 
@@ -49,12 +56,12 @@ Tested on
 *   ⚡ **Zero Head-of-Line Blocking**: Streams video/audio payloads via QUIC Datagrams (utilizing `quic-go`), bypassing TCP backlogs and guaranteeing real-time playback.
 *   🎮 **Per-App Audio Isolation**: Prompts users with active audio apps (queried via PipeWire/PulseAudio `pw-dump`) and creates a virtual null-sink to isolate and stream only the selected application's audio stream.
 *   📺 **X11 & Wayland Dual Support**:
-    *   **X11**: Direct screen capture via `x11grab`.
+    *   **X11**: Direct screen capture via GStreamer (`ximagesrc`).
     *   **Wayland**: Native PipeWire capture using GStreamer (`pipewiresrc`) by establishing a D-Bus ScreenCast portal handshake.
 *   🚀 **Hardware Acceleration Auto-Probing**:
-    *   NVIDIA NVENC (`h264_nvenc`).
-    *   Intel/AMD VA-API (`h264_vaapi`).
-    *   Automatic fallback to (`libx264`).
+    *   NVIDIA NVENC (`nvh264enc`).
+    *   Intel/AMD VA-API (`vah264enc`).
+    *   Automatic fallback to (`x264enc`).
 
 ---
 
@@ -63,10 +70,9 @@ Tested on
 Ensure the following dependencies are installed on your Linux system:
 
 ### Host (Bob)
-*   **OS** Linux 
+*   **OS**: Linux 
 *   **Go** (v1.22 or higher)
-*   **FFmpeg** (with `x11grab` and `pipewiregrab` support)
-*   **GStreamer** (optional, recommended for Wayland hardware capture: `gst-launch-1.0`, `gst-plugins-base`, `gst-plugins-good`, `gst-plugins-bad`)
+*   **GStreamer** (required for capturing and encoding: `gst-launch-1.0`, `gst-plugins-base`, `gst-plugins-good`, `gst-plugins-bad`)
 *   **PipeWire / PulseAudio** (for application audio capturing)
 *   **pactl & pw-link** (for null sink creation and port mapping)
 
@@ -100,6 +106,12 @@ Alice is the receiver watching the stream. Connect by specifying Bob's target IP
 
 ---
 
+## Known Issues
+  * **VA-API Aspect Ratio Stretching**: When utilizing Intel/AMD hardware-accelerated encoding (vah264enc), sharing a window that has been  dynamically resized may cause the output image to stretch abnormally to fit the target resolution. This behavior stems from an upstream driver limitation with specific VA-API implementations. 
+    * Workaround: Maintain standard aspect ratio dimensions or fallback to software encoding (-codec=x264enc).
+
+---
+
 ## CLI Flag References
 
 ### 1. Host (`share`)
@@ -110,14 +122,14 @@ Alice is the receiver watching the stream. Connect by specifying Bob's target IP
 | `-bitrate` | `int` | `8000` | Target video bitrate in kbps (e.g., `8000` = 8 Mbps). |
 | `-fps` | `int` | `60` | Captured frame rate. A value of `60` offers buttery smooth streams. |
 | `-size` | `string` | `"1920x1080"` | Capture resolution width x height. |
-| `-codec` | `string` | `"libx264"` | Video encoder library/element. Probes hardware acceleration by default. |
+| `-codec` | `string` | `"auto"` | GStreamer H.264 encoder element (e.g. `x264enc`, `vah264enc`, `nvh264enc`). Auto-probes hardware acceleration by default. |
 | `-g` | `int` | `30` | GOP size. Small default is crucial for instant client startup sync. |
 | `-preset` | `string` | `"ultrafast"` | x264 software encoder speed preset (e.g., `ultrafast`, `veryfast`, `medium`). |
 | `-tune` | `string` | `"zerolatency"` | x264 software encoder latency tuning mode. |
 | `-volume` | `float` | `150.0` | Audio volume amplification factor. |
 | `-audio-app`| `string` | `""` | App name to capture audio from (bypasses interactive prompt). |
 | `-display` | `string` | `$DISPLAY` | X11 display string (only applicable in X11 environments). |
-| `-test` | `bool` | `false` | Synthetic mode using FFmpeg's `testsrc` instead of capturing screen. |
+| `-test` | `bool` | `false` | Synthetic mode using GStreamer's `videotestsrc` and `audiotestsrc` instead of capturing screen. |
 | `-mock-portal`| `bool`| `false` | Simulates a mock ScreenCast portal in background (for testing). |
 | `-headless` | `bool` | `false` | Bypasses physical capture and uses synthetic GStreamer test sources. |
 | `-debug` | `bool` | `false` | Prints verbose shell command lines, encoders, and network output metrics. |
