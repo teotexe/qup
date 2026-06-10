@@ -1,10 +1,9 @@
 # Qup
 
-A lightweight peer-to-peer screen-sharing tool. 
+A lightweight screen-sharing tool that streams directly between peers over QUIC.
 
-> [!NOTE]
-> The code was written entirely by Claude Opus 4.6 with heavy steering and human feedbacks. 
-> A human-written design file was provided to the agent with the main architecture and goals of the project.
+Unlike WebRTC-based solutions, Qup does not rely on STUN/TURN infrastructure 
+or NAT traversal services. The host exposes a port and clients connect directly using the host's IPv4 address.
 
 It started as an experimental project to explore P2P networking using 
 decentralized networks and DHT protocols. The initial goal was to have 2 peers 
@@ -21,12 +20,18 @@ and the unpredictability of relay servers or STUN/TURN overhead would have been 
 
 So the solution was just to rely on a direct IPv4 connection with minimal manual configuration.
 
-It ended up being a super efficient way to share a screen/window.
+It ended up being an efficient way to share a screen/window.
+
+> [!NOTE]
+> The code was generated entirely with Claude Opus 4.6 with heavy steering and human feedback. 
+> A human-written design file was provided to the agent with the main architecture and goals of the project.
+
 
 ## Performance
-Tested over network with no streaming issues, no lag, no artifacts:
-  * host:   300mb upload speed
-  * client: 20mb download speed
+Test environment:
+  * Host:   300mbps upload speed
+  * Client: 20mbps download speed
+  * Stream: 1080p60
 
 ### Host hardware configuration:
 |  |  |
@@ -35,18 +40,17 @@ Tested over network with no streaming issues, no lag, no artifacts:
 | **GPU** | Intel ARC 140V |
 | **RAM** | 32GB |
 | **OS** | Fedora (Wayland) |
-| **Throughput** | 1080p60 |
 
 ### Benchmark:
-|  | Qup | Commercial (Zoom/Teams/Discord) |
-| --- | --- | --- |
-| **Transport** | **QUIC (via UDP)** | HTTPS/WebRTC (ICE/STUN/TURN) |
-| **CPU (Host)** | **2% – 5%** | 10% – 50%+ | 
-| **RAM (Host)** | **~30MB** | 200MB – 1GB+ | 
-| **CPU (Viewer)** |  **~3%** | 15–30% (browser/app overhead) |
-| **RAM (Viewer)** |  **~120MB** | 300–800+ MB |
-| **Setup** | Manual (Port Forwarding) | Automated (STUN/TURN Servers) |
-| **NAT Traversal** | None (Direct IP) | High (handles restrictive firewalls) |
+|  |  |
+| --- | --- |
+| **Transport** | **QUIC (via UDP)** |
+| **CPU (Host)** | **2% – 5%** | 
+| **RAM (Host)** | **~30MB** | 
+| **CPU (Viewer)** |  **~3%** |
+| **RAM (Viewer)** |  **~120MB** |
+| **Setup** | Manual (Port Forwarding) |
+| **NAT Traversal** | None (Direct IP) |
 
 Tested locally up to 4k 60fps with no issues.
 
@@ -238,5 +242,4 @@ Qup includes a self-contained integration test suite to verify pipeline construc
 ```bash
 ./test.sh
 ```
-
 The script builds both binaries, sets up a temporary local D-Bus bus, and executes loopback streaming under headless X11 and Wayland (using the mock ScreenCast portal).
