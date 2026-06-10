@@ -1,4 +1,4 @@
-package main
+package share
 
 import (
 	"bufio"
@@ -32,25 +32,29 @@ const (
 	BackendWaylandGStreamer
 )
 
-func main() {
+func Run(args []string) {
 	os.Setenv("PULSE_LATENCY_MSEC", "30")
+
+	// Create custom flag set to avoid pollution
+	fs := flag.NewFlagSet("share", flag.ExitOnError)
+
 	// Parse CLI flags
-	portFlag := flag.Int("port", 22050, "Port to listen on")
-	displayFlag := flag.String("display", "", "X11 display to grab (e.g. :0.0). Defaults to $DISPLAY env var.")
-	sizeFlag := flag.String("size", "1920x1080", "Video capture dimensions (width x height)")
-	fpsFlag := flag.Int("fps", 60, "Frame rate for capturing")
-	presetFlag := flag.String("preset", "ultrafast", "x264 encoder preset (e.g., ultrafast, superfast, veryfast, medium)")
-	tuneFlag := flag.String("tune", "zerolatency", "x264 encoder tune option")
-	gopFlag := flag.Int("g", 30, "GOP (keyframe interval) size. Default is 30 for low-latency fast startup connection.")
-	codecFlag := flag.String("codec", "auto", "GStreamer H.264 encoder element (e.g., x264enc, vah264enc, nvh264enc). Defaults to 'auto' for hardware autoprobing.")
-	bitrateFlag := flag.Int("bitrate", 8000, "Target video bitrate in kbps (e.g., 8000 for 8 Mbps high-quality 1080p)")
-	testFlag := flag.Bool("test", false, "Use a synthetic test video source (lavfi testsrc) instead of X11 capture")
-	mockPortalFlag := flag.Bool("mock-portal", false, "Start a mock D-Bus ScreenCast portal in the background (for testing)")
-	debugFlag := flag.Bool("debug", false, "Enable verbose diagnostic logging for pipeline debugging")
-	headlessFlag := flag.Bool("headless", false, "Use synthetic GStreamer test source (no screen capture, no portal popup).")
-	volumeFlag := flag.Float64("volume", 5.0, "Audio volume amplification factor (e.g. 150.0 for 150x volume boost)")
-	audioAppFlag := flag.String("audio-app", "", "Name of the app to capture audio from (e.g., 'Firefox'). If empty, falls back to system audio.")
-	flag.Parse()
+	portFlag := fs.Int("port", 22050, "Port to listen on")
+	displayFlag := fs.String("display", "", "X11 display to grab (e.g. :0.0). Defaults to $DISPLAY env var.")
+	sizeFlag := fs.String("size", "1920x1080", "Video capture dimensions (width x height)")
+	fpsFlag := fs.Int("fps", 60, "Frame rate for capturing")
+	presetFlag := fs.String("preset", "ultrafast", "x264 encoder preset (e.g., ultrafast, superfast, veryfast, medium)")
+	tuneFlag := fs.String("tune", "zerolatency", "x264 encoder tune option")
+	gopFlag := fs.Int("g", 30, "GOP (keyframe interval) size. Default is 30 for low-latency fast startup connection.")
+	codecFlag := fs.String("codec", "auto", "GStreamer H.264 encoder element (e.g., x264enc, vah264enc, nvh264enc). Defaults to 'auto' for hardware autoprobing.")
+	bitrateFlag := fs.Int("bitrate", 8000, "Target video bitrate in kbps (e.g., 8000 for 8 Mbps high-quality 1080p)")
+	testFlag := fs.Bool("test", false, "Use a synthetic test video source (lavfi testsrc) instead of X11 capture")
+	mockPortalFlag := fs.Bool("mock-portal", false, "Start a mock D-Bus ScreenCast portal in the background (for testing)")
+	debugFlag := fs.Bool("debug", false, "Enable verbose diagnostic logging for pipeline debugging")
+	headlessFlag := fs.Bool("headless", false, "Use synthetic GStreamer test source (no screen capture, no portal popup).")
+	volumeFlag := fs.Float64("volume", 5.0, "Audio volume amplification factor (e.g. 150.0 for 150x volume boost)")
+	audioAppFlag := fs.String("audio-app", "", "Name of the app to capture audio from (e.g., 'Firefox'). If empty, falls back to system audio.")
+	fs.Parse(args)
 
 	audioApp := *audioAppFlag
 	if audioApp == "" && !*testFlag && !*headlessFlag {

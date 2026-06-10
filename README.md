@@ -139,25 +139,26 @@ Ensure the following dependencies are installed on your Linux system:
 
 ## Quick Start
 
-### 1. Compile the Binaries
-Clone the repository and build the host and client applications:
+### 1. Compile the Binary
+Clone the repository and build the unified `qup` binary:
 ```bash
-go build -o share cmd/share/share.go
-go build -o connect cmd/connect/connect.go
+go build -o qup main.go
 ```
 
 ### 2. Start the Host (Bob)
 Bob is the sender sharing his screen. Start the host application on a port of choice (e.g., `50001`):
 ```bash
-./share -port=50001
+./qup share -port=50001
 ```
 *Note: If running in a terminal, Qup will interactively prompt you to choose whether to share the default system audio or select a specific running application (like Firefox or Chrome) to capture audio from.*
 
 ### 3. Connect as the Client (Alice)
 Alice is the receiver watching the stream. Connect by specifying Bob's target IP and port:
 ```bash
-./connect [BOB_IP]:50001
+./qup connect [BOB_IP]:50001
 ```
+
+*(Note: You can also use the legacy flag-style format like `./qup -share -port=50001` or `./qup -connect [BOB_IP]:50001` if preferred.)*
 
 ---
 
@@ -209,19 +210,19 @@ Alice is the receiver watching the stream. Connect by specifying Bob's target IP
 ### 1. High-Performance GPU Capture & Encode (Default Wayland)
 If running on a modern Wayland desktop environment with an Intel, AMD, or NVIDIA GPU, starting Bob with default options will automatically activate GStreamer-native hardware GPU capture and encoding:
 ```bash
-./share
+./qup share
 ```
 
 ### 2. High-Quality LAN Mode (High Bandwidth)
 If streaming over a high-speed local network or fiber link, you can push the quality to the absolute limit by raising the target bitrate:
 ```bash
-./share -bitrate=15000 -size=1920x1080 -fps=60
+./qup share -bitrate=15000 -size=1920x1080 -fps=60
 ```
 
 ### 3. Lower Bandwidth Mode (Mobile Hotspot / Poor Wi-Fi)
 If Bob's upload connection is constrained, reduce the framerate and lower the target bitrate to maintain smoothness:
 ```bash
-./share -bitrate=3000 -fps=30 -preset=veryfast
+./qup share -bitrate=3000 -fps=30 -preset=veryfast
 ```
 
 ---
@@ -231,7 +232,7 @@ If Bob's upload connection is constrained, reduce the framerate and lower the ta
 Qup includes a self-contained integration test suite to verify pipeline construction and end-to-end communication loopbacks:
 
 ```bash
-./verify.sh
+./test.sh
 ```
 
 The script builds both binaries, sets up a temporary local D-Bus bus, and executes loopback streaming under headless X11 and Wayland (using the mock ScreenCast portal).

@@ -1,4 +1,4 @@
-package main
+package connect
 
 import (
 	"context"
@@ -20,33 +20,36 @@ import (
 
 // Connection main loop
 
-func main() {
+func Run(args []string) {
 	// Set underlying defaults for optimal low-latency streaming profiles
 	os.Setenv("PULSE_LATENCY_MSEC", "30")
 
+	// Create custom flag set to avoid pollution
+	fs := flag.NewFlagSet("connect", flag.ExitOnError)
+
 	// Parse CLI flags
 	// 5000000 bytes (5MB) ensures we catch a keyframe even on high bitrate streams so the window opens
-	probesizeFlag := flag.Int("probesize", 5000000, "ffplay probesize in bytes")
+	probesizeFlag := fs.Int("probesize", 5000000, "ffplay probesize in bytes")
 	// 2000000 microseconds (2 seconds) gives it enough time to analyze the stream
-	analyzeDurationFlag := flag.Int("analyze-duration", 2000000, "ffplay analyze_duration in microseconds")
+	analyzeDurationFlag := fs.Int("analyze-duration", 2000000, "ffplay analyze_duration in microseconds")
 
-	lowDelayFlag := flag.Bool("low-delay", true, "Enable ffplay low_delay flag")
-	framedropFlag := flag.Bool("framedrop", true, "Enable ffplay framedrop flag")
-	ffplayLogLevelFlag := flag.String("loglevel", "warning", "ffplay log level (quiet, panic, fatal, error, warning, info, verbose, debug)")
-	testFlag := flag.Bool("test", false, "Run in headless test mode, printing data receipt diagnostics instead of spawning ffplay")
-	hwaccelFlag := flag.String("hwaccel", "vaapi", "Hardware acceleration method for ffplay decoding (vaapi, none)")
-	hwaccelDeviceFlag := flag.String("hwaccel-device", "/dev/dri/renderD128", "DRI render node for hardware acceleration")
-	flag.Parse()
+	lowDelayFlag := fs.Bool("low-delay", true, "Enable ffplay low_delay flag")
+	framedropFlag := fs.Bool("framedrop", true, "Enable ffplay framedrop flag")
+	ffplayLogLevelFlag := fs.String("loglevel", "warning", "ffplay log level (quiet, panic, fatal, error, warning, info, verbose, debug)")
+	testFlag := fs.Bool("test", false, "Run in headless test mode, printing data receipt diagnostics instead of spawning ffplay")
+	hwaccelFlag := fs.String("hwaccel", "vaapi", "Hardware acceleration method for ffplay decoding (vaapi, none)")
+	hwaccelDeviceFlag := fs.String("hwaccel-device", "/dev/dri/renderD128", "DRI render node for hardware acceleration")
+	fs.Parse(args)
 
 	// The peer address should be the first positional argument
-	args := flag.Args()
-	if len(args) < 1 {
-		fmt.Println("Usage: ./connect [flags] [BOB_WAN_IP:PORT]")
+	remainingArgs := fs.Args()
+	if len(remainingArgs) < 1 {
+		fmt.Println("Usage: ./qup connect [flags] [BOB_WAN_IP:PORT]")
 		fmt.Println("\nFlags:")
-		flag.PrintDefaults()
+		fs.PrintDefaults()
 		os.Exit(1)
 	}
-	targetAddr := args[0]
+	targetAddr := remainingArgs[0]
 
 	log.Printf("Starting AuraShare Receiver (Alice) connecting to %s...", targetAddr)
 	log.Printf("Receiver config: TestMode=%v, probesize=%d, analyze_duration=%d, low_delay=%v, framedrop=%v, loglevel=%s, hwaccel=%s",

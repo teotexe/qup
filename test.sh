@@ -7,8 +7,8 @@ echo "=== Qup P2P STREAM VERIFICATION & AUTOMATED TESTING ==="
 
 # Cleanup old processes
 cleanup() {
-    echo "Cleaning up any running share, connect, or dbus processes safely..."
-    # Removed -f to stop pulling down Google Chrome and other processes
+    echo "Cleaning up any running qup, share, connect, or dbus processes safely..."
+    pkill -x "qup" || true
     pkill -x "share" || true
     pkill -x "connect" || true
     pkill -f "dbus-daemon --session" || true
@@ -19,8 +19,7 @@ cleanup
 
 # Ensure binaries are built
 echo "Building binaries..."
-go build -o share cmd/share/share.go
-go build -o connect cmd/connect/connect.go
+go build -o qup main.go
 
 echo "========================================================="
 echo "TEST 1: Headless X11 (Synthetic testsrc Mode)"
@@ -30,22 +29,21 @@ export XDG_SESSION_TYPE=""
 export Qup_FORCE_WAYLAND=""
 
 echo "Launching share host on port 50011..."
-./share -port=50011 -test > host_x11.log 2>&1 &
+./qup share -port=50011 -test > host_x11.log 2>&1 &
 HOST_PID=$!
 
 sleep 2
 
 echo "Launching connect client..."
-./connect -test 127.0.0.1:50011 > client_x11.log 2>&1 &
+./qup connect -test 127.0.0.1:50011 > client_x11.log 2>&1 &
 CLIENT_PID=$!
 
 echo "Monitoring P2P run for 10 seconds..."
 sleep 10
 
 echo "Stopping processes..."
-# Targeted kills using exact matching
-pkill -x "share" || true
-pkill -x "connect" || true
+kill $HOST_PID $CLIENT_PID 2>/dev/null || true
+pkill -x "qup" || true
 
 echo "Analyzing X11 Test logs..."
 echo "--- Host X11 Log Snippet ---"
@@ -103,21 +101,21 @@ export XDG_SESSION_TYPE="wayland"
 export Qup_FORCE_WAYLAND="1"
 
 echo "Launching share host with -mock-portal on port 50012..."
-./share -port=50012 -test -mock-portal > host_wayland.log 2>&1 &
+./qup share -port=50012 -test -mock-portal > host_wayland.log 2>&1 &
 HOST_WAYLAND_PID=$!
 
 sleep 2
 
 echo "Launching connect client..."
-./connect -test 127.0.0.1:50012 > client_wayland.log 2>&1 &
+./qup connect -test 127.0.0.1:50012 > client_wayland.log 2>&1 &
 CLIENT_WAYLAND_PID=$!
 
 echo "Monitoring P2P Wayland run for 10 seconds..."
 sleep 10
 
 echo "Stopping processes..."
-pkill -x "share" || true
-pkill -x "connect" || true
+kill $HOST_WAYLAND_PID $CLIENT_WAYLAND_PID 2>/dev/null || true
+pkill -x "qup" || true
 pkill -f "dbus-daemon --session" || true
 
 echo "Analyzing Wayland Test logs..."
