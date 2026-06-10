@@ -125,15 +125,19 @@ flowchart LR
 Ensure the following dependencies are installed on your Linux system:
 
 ### Host (Bob)
-*   **OS**: Linux 
-*   **Go** (v1.22 or higher)
-*   **GStreamer** (required for capturing and encoding: `gst-launch-1.0`, `gst-plugins-base`, `gst-plugins-good`, `gst-plugins-bad`)
-*   **PipeWire / PulseAudio** (for application audio capturing)
-*   **pactl & pw-link** (for null sink creation and port mapping)
+  * **OS**: Linux 
+  * **Go** (v1.22 or higher)
+  * **GStreamer** (required for capturing and encoding: `gst-launch-1.0`, `gst-plugins-base`, `gst-plugins-good`, `gst-plugins-bad`)
+  * **PipeWire / PulseAudio** (for application audio capturing)
+  * **pactl & pw-link** (for null sink creation and port mapping)
 
 ### Client (Alice)
-*   **OS** Any
-*   **ffplay** (included with standard FFmpeg installs) or **VLC** (fallback)
+  * **OS** Any
+  * **Media Player**:
+    * **ffplay** (included with standard FFmpeg installs), either:
+      * available in the system `PATH`, or placed as an
+      * executable in the same directory as the `qup` executable
+  * **VLC** (fallback)
 
 ---
 
