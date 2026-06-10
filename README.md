@@ -31,7 +31,7 @@ It ended up being an efficient way to share a screen/window.
 Test environment:
   * Host:   300mbps upload speed
   * Client: 20mbps download speed
-  * Stream: 1080p60
+  * Stream: 1920x1080p 60fps 3000bps
 
 ### Host hardware configuration:
 |  |  |
