@@ -3,7 +3,7 @@
 # Exit immediately if a command exits with a non-zero status
 set -e
 
-echo "=== AURASHARE P2P STREAM VERIFICATION & AUTOMATED TESTING ==="
+echo "=== Qup P2P STREAM VERIFICATION & AUTOMATED TESTING ==="
 
 # Cleanup old processes
 cleanup() {
@@ -27,7 +27,7 @@ echo "TEST 1: Headless X11 (Synthetic testsrc Mode)"
 echo "========================================================="
 
 export XDG_SESSION_TYPE=""
-export AURASHARE_FORCE_WAYLAND=""
+export Qup_FORCE_WAYLAND=""
 
 echo "Launching share host on port 50011..."
 ./share -port=50011 -test > host_x11.log 2>&1 &
@@ -100,7 +100,7 @@ export DBUS_SESSION_BUS_ADDRESS=$DBUS_OUTPUT
 echo "D-Bus session bus started at: $DBUS_SESSION_BUS_ADDRESS"
 
 export XDG_SESSION_TYPE="wayland"
-export AURASHARE_FORCE_WAYLAND="1"
+export Qup_FORCE_WAYLAND="1"
 
 echo "Launching share host with -mock-portal on port 50012..."
 ./share -port=50012 -test -mock-portal > host_wayland.log 2>&1 &
@@ -152,6 +152,6 @@ else
 fi
 
 echo "========================================================="
-echo "ALL TESTS COMPLETED SUCCESSFULLY! AuraShare is fully validated."
+echo "ALL TESTS COMPLETED SUCCESSFULLY! Qup is fully validated."
 echo "========================================================="
 exit 0

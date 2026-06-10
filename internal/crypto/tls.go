@@ -14,7 +14,7 @@ import (
 )
 
 // ProtocolName is the ALPN identifier used for QUIC connections
-const ProtocolName = "aurashare"
+const ProtocolName = "Qup"
 
 // GenerateServerTLSConfig creates a self-signed, in-memory TLS certificate
 // and returns a valid tls.Config suited for quic-go.
@@ -33,7 +33,7 @@ func GenerateServerTLSConfig() (*tls.Config, error) {
 	template := x509.Certificate{
 		SerialNumber: serialNumber,
 		Subject: pkix.Name{
-			Organization: []string{"AuraShare"},
+			Organization: []string{"Qup"},
 			CommonName:   "localhost",
 		},
 		NotBefore:             time.Now().Add(-1 * time.Hour),

@@ -17,8 +17,8 @@ import (
 	"syscall"
 	"time"
 
-	"aurashare/internal/crypto"
-	"aurashare/internal/stats"
+	"qup/internal/crypto"
+	"qup/internal/stats"
 
 	"github.com/quic-go/quic-go"
 	portal "github.com/teotexe/wayland-portal-go"

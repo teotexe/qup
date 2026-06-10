@@ -1,15 +1,13 @@
-# AuraShare
+# Qup
 
-A lightweight peer-to-peer screen-sharing engine. 
+A lightweight peer-to-peer screen-sharing tool. 
 
-The code was written entirely by claude opus 4.6 with heavy steering and human feedbacks. 
-A human-written design file was provided with the main architecture and goals of the project.
+> [!NOTE]
+> The code was written entirely by Claude Opus 4.6 with heavy steering and human feedbacks. 
+> A human-written design file was provided to the agent with the main architecture and goals of the project.
 
-The app requires the sharing peer to open a port on their router, 
-the connecting peer just streams the video over UDP.
-
-It started as an experimental project to explore decentralized networking, 
-DHT protocols, and P2P discovery. The initial goal was to have 2 peers 
+It started as an experimental project to explore P2P networking using 
+decentralized networks and DHT protocols. The initial goal was to have 2 peers 
 exchange a perpetual InfoHash (just like a phone number), and then have 2 daemons
 running in parallel that both announced and searched over the Bittorrent DHT for 
 the other peer's Infohash. After finding each other's public IP address the 2 would 
@@ -26,18 +24,21 @@ So the solution was just to rely on a direct IPv4 connection with minimal manual
 It ended up being a super efficient way to share a screen/window.
 
 ## Performance
-Tested over network, host on 1gb connection, client on 20mb connection, 
-with no streaming issues, no lag, no artifacts.
+Tested over network with no streaming issues, no lag, no artifacts:
+  * host:   300mb upload speed
+  * client: 20mb download speed
 
+### Host hardware configuration:
 |  |  |
 | --- | --- |
 | **CPU** | Intel Core Ultra 7 258V |
 | **GPU** | Intel ARC 140V |
 | **RAM** | 32GB |
-| **OS** | Fedora |
+| **OS** | Fedora (Wayland) |
 | **Throughput** | 1080p60 |
 
-|  | Aurashare | Commercial (Zoom/Teams/Discord) |
+### Benchmark:
+|  | Qup | Commercial (Zoom/Teams/Discord) |
 | --- | --- | --- |
 | **Transport** | **QUIC (via UDP)** | HTTPS/WebRTC (ICE/STUN/TURN) |
 | **CPU (Host)** | **2% – 5%** | 10% – 50%+ | 
@@ -51,21 +52,75 @@ Tested locally up to 4k 60fps with no issues.
 
 ---
 
-## Key Features
+## Features
 
-*   ⚡ **Zero Head-of-Line Blocking**: Streams video/audio payloads via QUIC Datagrams (utilizing `quic-go`), bypassing TCP backlogs and guaranteeing real-time playback.
+*   ⚡ **QUIC protocol**: Streams video/audio payloads via QUIC Datagrams (utilizing `quic-go`).
 *   🎮 **Per-App Audio Isolation**: Prompts users with active audio apps (queried via PipeWire/PulseAudio `pw-dump`) and creates a virtual null-sink to isolate and stream only the selected application's audio stream.
 *   📺 **X11 & Wayland Dual Support**:
     *   **X11**: Direct screen capture via GStreamer (`ximagesrc`).
-    *   **Wayland**: Native PipeWire capture using GStreamer (`pipewiresrc`) by establishing a D-Bus ScreenCast portal handshake.
-*   🚀 **Hardware Acceleration Auto-Probing**:
+    *   **Wayland**: Native PipeWire capture using GStreamer (`pipewiresrc`) by establishing a D-Bus ScreenCast portal handshake powered by [wayland-portal-go](https://github.com/teotexe/wayland-portal-go).
+*   🚀 **Hardware Acceleration**:
     *   NVIDIA NVENC (`nvh264enc`).
     *   Intel/AMD VA-API (`vah264enc`).
     *   Automatic fallback to (`x264enc`).
 
+```mermaid
+flowchart LR
+    subgraph Bob["Host (Bob)"]
+
+        subgraph Wayland["On wayland"]
+            APP[Qup]
+            DBUS[D-Bus]
+            PORTAL[xdg-desktop-portal<br/>wayland-portal-go]
+            PW[PipeWire]
+        end
+
+        X11[X11 Capture<br/>ximagesrc]
+
+        CAP[Screen Capture]
+        AUDIO[Audio Capture<br/>PipeWire / PulseAudio]
+
+        ENC[H.264 Encoder<br/>NVENC / VA-API / x264]
+        TS[MPEG-TS Packaging]
+        QUIC[QUIC Datagrams<br/>TLS 1.3]
+    end
+
+    subgraph Internet["Internet"]
+        ROUTER[IPv4 Router<br/>Port Forwarding]
+    end
+
+    subgraph Alice["Client (Alice)"]
+        RX[QUIC Receiver]
+        PLAYER[ffplay / VLC]
+        OUT[Video + Audio Playback]
+    end
+
+    APP --> DBUS
+    DBUS --> PORTAL
+    PORTAL --> PW
+    PW --> CAP
+
+    X11 --> CAP
+
+    CAP --> ENC
+    AUDIO --> TS
+    ENC --> TS
+
+    TS --> QUIC
+    QUIC --> ROUTER
+    ROUTER --> RX
+
+    RX --> PLAYER
+    PLAYER --> OUT
+```
 ---
 
 ## System Requirements
+
+> [!IMPORTANT]
+> Qup utilizes direct IPv4 peer-to-peer connections.
+> The host (Bob) must have an open port forwarded on their router to accept incoming client connections.
+> Data is encrypted using TLS 1.3, as specified by the QUIC standard.
 
 Ensure the following dependencies are installed on your Linux system:
 
@@ -96,7 +151,7 @@ Bob is the sender sharing his screen. Start the host application on a port of ch
 ```bash
 ./share -port=50001
 ```
-*Note: If running in a terminal, AuraShare will interactively prompt you to choose whether to share the default system audio or select a specific running application (like Firefox or Chrome) to capture audio from.*
+*Note: If running in a terminal, Qup will interactively prompt you to choose whether to share the default system audio or select a specific running application (like Firefox or Chrome) to capture audio from.*
 
 ### 3. Connect as the Client (Alice)
 Alice is the receiver watching the stream. Connect by specifying Bob's target IP and port:
@@ -173,16 +228,10 @@ If Bob's upload connection is constrained, reduce the framerate and lower the ta
 
 ## Verification & Automated Testing
 
-AuraShare includes a self-contained integration test suite to verify pipeline construction and end-to-end communication loopbacks:
+Qup includes a self-contained integration test suite to verify pipeline construction and end-to-end communication loopbacks:
 
 ```bash
 ./verify.sh
 ```
 
 The script builds both binaries, sets up a temporary local D-Bus bus, and executes loopback streaming under headless X11 and Wayland (using the mock ScreenCast portal).
-
----
-
-## License
-
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
