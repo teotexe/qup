@@ -54,12 +54,12 @@ Tested locally up to 4k 60fps with no issues.
 
 ## Features
 
-*   ⚡ **QUIC protocol**: Streams video/audio payloads via QUIC Datagrams (utilizing `quic-go`).
-*   🎮 **Per-App Audio Isolation**: Prompts users with active audio apps (queried via PipeWire/PulseAudio `pw-dump`) and creates a virtual null-sink to isolate and stream only the selected application's audio stream.
-*   📺 **X11 & Wayland Dual Support**:
+*   **QUIC protocol**: Streams video/audio payloads via QUIC Datagrams (utilizing `quic-go`).
+*   **Per-App Audio Isolation**: Prompts users with active audio apps (queried via PipeWire/PulseAudio `pw-dump`) and creates a virtual null-sink to isolate and stream only the selected application's audio stream.
+*   **X11 & Wayland Dual Support**:
     *   **X11**: Direct screen capture via GStreamer (`ximagesrc`).
     *   **Wayland**: Native PipeWire capture using GStreamer (`pipewiresrc`) by establishing a D-Bus ScreenCast portal handshake powered by [wayland-portal-go](https://github.com/teotexe/wayland-portal-go).
-*   🚀 **Hardware Acceleration**:
+*   **Hardware Acceleration**:
     *   NVIDIA NVENC (`nvh264enc`).
     *   Intel/AMD VA-API (`vah264enc`).
     *   Automatic fallback to (`x264enc`).
